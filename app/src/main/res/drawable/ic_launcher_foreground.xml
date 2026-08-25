@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AioShell 默认启动器图标前景：一枚「壳之眼」识别标 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 主圆 -->
+    <path
+        android:pathData="M54,28 A26,26 0 1 1 54,80 A26,26 0 1 1 54,28 Z"
+        android:fillColor="@color/ic_launcher_mark" />
+    <!-- 内部暗色切口（与背景同色，形成"壳"的开口） -->
+    <path
+        android:pathData="M47,42 A9.5,9.5 0 1 1 47,61 A9.5,9.5 0 1 1 47,42 Z"
+        android:fillColor="@color/ic_launcher_background" />
+    <!-- 左下呼应小点，增加辨识度 -->
+    <path
+        android:pathData="M70,68 A4,4 0 1 1 70,76 A4,4 0 1 1 70,68 Z"
+        android:fillColor="@color/ic_launcher_mark"
+        android:fillAlpha="0.65" />
+</vector>

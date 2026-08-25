@@ -1,0 +1,17 @@
+*.iml
+.gradle
+/kotlin
+/.kotlin
+/local.properties
+/.idea
+.DS_Store
+build/
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.keystore
+*.hprof
+.idea/
+!.mvn/wrapper/maven-wrapper.jar
+!gradle/wrapper/gradle-wrapper.jar

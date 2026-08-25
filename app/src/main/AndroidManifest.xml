@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 仅申请网络权限：请求用户自配的第三方接口 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:name=".AioShellApplication"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.AioShell"
+        android:usesCleartextTraffic="true"
+        android:supportsRtl="true"
+        android:allowBackup="true">
+
+        <!-- 真正承载界面的 Activity，不直接暴露为入口 -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="false" />
+
+        <!-- 启动入口：默认图标 -->
+        <activity-alias
+            android:name=".LauncherDefault"
+            android:targetActivity=".MainActivity"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- 可选 App 图标 A（用户素材） -->
+        <activity-alias
+            android:name=".LauncherA"
+            android:targetActivity=".MainActivity"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher_a"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- 可选 App 图标 B（用户素材） -->
+        <activity-alias
+            android:name=".LauncherB"
+            android:targetActivity=".MainActivity"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher_b"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+    </application>
+</manifest>

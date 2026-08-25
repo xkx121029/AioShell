@@ -3,6 +3,8 @@
 
     <!-- 仅申请网络权限：请求用户自配的第三方接口 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 语音输入：本地离线识别需录音权限（运行时申请） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
         android:name=".AioShellApplication"

@@ -2,6 +2,18 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 规范，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-08-25
+
+### 新增：本地语音输入
+- 接入 Vosk 离线语音识别（本地推理，不联网）
+- 语音模型应用内引导下载（默认中文小模型 vosk-model-small-cn-0.22，含常见英文），带下载进度
+- 对话页输入栏麦克风按钮：点击开始 / 停止语音输入，识别文本实时回显并填入输入框
+- 录音权限（RECORD_AUDIO）运行时申请，识别结果完全本地
+- 中英混合：中文小模型可识别常见英文
+
+### 构建
+- 版本提升至 1.3.0（versionCode 5），引入 com.alphacephei:vosk-android
+
 ## [1.2.2] - 2026-08-25
 
 ### 新增：代码块增强

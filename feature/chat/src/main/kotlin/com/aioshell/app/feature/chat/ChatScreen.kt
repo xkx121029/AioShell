@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
@@ -81,9 +82,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.aioshell.app.core.data.audio.VoiceModelState
 import com.aioshell.app.core.data.model.ChatMessage
 import com.aioshell.app.core.data.model.MessageAttachment
 import com.aioshell.app.core.data.model.MessageRole
@@ -120,6 +123,29 @@ fun ChatScreen(
 
     fun launchPhotoPicker() {
         pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
+
+    val voiceModelState by viewModel.voiceModelState.collectAsStateWithLifecycle()
+
+    val micPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) viewModel.toggleVoice { recognized -> appendSpeech(input, recognized) { input = it } }
+    }
+
+    fun onMicClick() {
+        val record = android.Manifest.permission.RECORD_AUDIO
+        val granted = ContextCompat.checkSelfPermission(context, record) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            viewModel.toggleVoice { recognized -> appendSpeech(input, recognized) { input = it } }
+        } else {
+            micPermission.launch(record)
+        }
+    }
+
+    // 语音识别中，实时回显识别文本到输入框
+    LaunchedEffect(ui.speechText) {
+        if (ui.isListening) input = ui.speechText
     }
 
     // 是否停留在底部（用于智能跟随与"回到底部"按钮）
@@ -264,6 +290,22 @@ fun ChatScreen(
                 )
             }
 
+            when (val vm = voiceModelState) {
+                is VoiceModelState.Downloading -> Text(
+                    "正在下载语音模型 ${(vm.progress * 100).toInt()}% …",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppTheme.colors.secondary,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                is VoiceModelState.Error -> Text(
+                    vm.message,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppTheme.colors.error,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                else -> Unit
+            }
+
             if (!ui.hasConfig) NoConfigBanner(onGoConfig)
 
             InputBar(
@@ -271,7 +313,9 @@ fun ChatScreen(
                 onChange = { input = it },
                 isStreaming = ui.isStreaming,
                 canSend = ui.hasConfig,
+                isListening = ui.isListening,
                 onPickImage = ::launchPhotoPicker,
+                onVoiceToggle = ::onMicClick,
                 onSend = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.send(input)
@@ -326,7 +370,9 @@ private fun InputBar(
     onChange: (String) -> Unit,
     isStreaming: Boolean,
     canSend: Boolean,
+    isListening: Boolean,
     onPickImage: () -> Unit,
+    onVoiceToggle: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -337,6 +383,13 @@ private fun InputBar(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)) {
+            IconButton(onClick = onVoiceToggle) {
+                Icon(
+                    Icons.Filled.Mic,
+                    contentDescription = if (isListening) "停止语音输入" else "语音输入",
+                    tint = if (isListening) c.error else c.secondary,
+                )
+            }
             IconButton(onClick = onPickImage) {
                 Icon(Icons.Filled.AddPhotoAlternate, "添加图片", tint = c.secondary)
             }
@@ -480,4 +533,8 @@ private fun ActionItem(icon: ImageVector?, label: String, onClick: () -> Unit, t
         }
         Text(label, style = MaterialTheme.typography.bodyLarge, color = tint ?: c.onSurface)
     }
+}
+
+private fun appendSpeech(current: String, recognized: String, set: (String) -> Unit) {
+    set(if (current.isBlank()) recognized else "$current $recognized")
 }

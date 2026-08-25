@@ -40,6 +40,8 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     // DataStore
     implementation(libs.datastore.preferences)
+    // 本地离线语音识别（Vosk，官方 Android AAR，自带 JNA 依赖）
+    api("com.alphacephei:vosk-android:0.3.75")
 
     // Hilt
     implementation(libs.hilt.android)

@@ -5,6 +5,9 @@ import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aioshell.app.core.data.audio.ModelManager
+import com.aioshell.app.core.data.audio.VoskRecognizer
+import com.aioshell.app.core.data.audio.VoiceModelState
 import com.aioshell.app.core.data.image.ImageProcessor
 import com.aioshell.app.core.data.model.ChatConfig
 import com.aioshell.app.core.data.model.ChatMessage
@@ -41,6 +44,8 @@ data class ChatUiState(
     val isStreaming: Boolean = false,
     val reasoningEnabled: Boolean = true,
     val pendingImages: List<UiImage> = emptyList(),
+    val isListening: Boolean = false,
+    val speechText: String = "",
 )
 
 @HiltViewModel
@@ -49,6 +54,7 @@ class ChatViewModel @Inject constructor(
     private val sessionRepo: SessionRepository,
     private val configRepo: ConfigRepository,
     private val chatRepo: ChatRepository,
+    private val modelManager: ModelManager,
     @ApplicationContext private val appContext: Context,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -63,6 +69,11 @@ class ChatViewModel @Inject constructor(
             .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, null)
 
     private var streamingJob: Job? = null
+    private var voiceJob: Job? = null
+    private var speechAccumulated = ""
+
+    /** 语音模型下载 / 加载状态（来自 [ModelManager]）。 */
+    val voiceModelState: StateFlow<VoiceModelState> = modelManager.state
 
     init {
         viewModelScope.launch {
@@ -206,6 +217,39 @@ class ChatViewModel @Inject constructor(
     fun rename(title: String) = viewModelScope.launch {
         sessionRepo.rename(sessionId, title)
         _state.value = _state.value.copy(title = title)
+    }
+
+    /**
+     * 语音输入开关：点击开始 / 停止本地识别。
+     * 停止时把识别到的文本通过 [onResult] 交回 UI 填入输入框。
+     */
+    fun toggleVoice(onResult: (String) -> Unit) {
+        if (_state.value.isListening) {
+            voiceJob?.cancel()
+            voiceJob = null
+            _state.value = _state.value.copy(isListening = false, speechText = "")
+            if (speechAccumulated.isNotBlank()) onResult(speechAccumulated)
+            speechAccumulated = ""
+            return
+        }
+        speechAccumulated = ""
+        _state.value = _state.value.copy(isListening = true)
+        voiceJob = viewModelScope.launch {
+            runCatching { modelManager.ensureModel() }
+                .onSuccess { model ->
+                    VoskRecognizer.listen(model).collect { r ->
+                        if (r.finalized) {
+                            speechAccumulated += r.text
+                            _state.value = _state.value.copy(speechText = speechAccumulated)
+                        } else {
+                            _state.value = _state.value.copy(speechText = r.text)
+                        }
+                    }
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(isListening = false, speechText = "")
+                }
+        }
     }
 
     private companion object { const val MAX_IMAGES = 4 }

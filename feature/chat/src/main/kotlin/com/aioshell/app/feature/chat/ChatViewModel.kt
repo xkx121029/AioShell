@@ -110,6 +110,41 @@ class ChatViewModel @Inject constructor(
         _state.value = _state.value.copy(isStreaming = false)
     }
 
+    /**
+     * 重新生成某条 AI 回复：删除该回复，并以它之前的历史（含触发它的用户消息）重新流式生成。
+     */
+    fun regenerate(assistantId: String) {
+        if (_state.value.isStreaming) return
+        val cfg = activeConfig.value ?: return
+        val idx = _state.value.messages.indexOfFirst { it.id == assistantId }
+        if (idx < 0) return
+
+        streamingJob?.cancel()
+        streamingJob = viewModelScope.launch {
+            _state.value = _state.value.copy(isStreaming = true)
+            try {
+                messageRepo.delete(assistantId)
+                val assistant = messageRepo.addAssistantMessage(sessionId)
+                val history = messageRepo.getInSession(sessionId).filterNot { it.id == assistant.id }
+                if (history.isEmpty()) { messageRepo.delete(assistant.id); return@launch }
+                var acc = ""
+                runCatching {
+                    chatRepo.streamChat(cfg, history).collect { delta ->
+                        acc += delta
+                        messageRepo.updateAssistantText(assistant.id, acc)
+                    }
+                }.onSuccess { messageRepo.markAssistantDone(assistant.id) }
+                    .onFailure { e ->
+                        val msg = (e as? ApiException)?.message ?: (e.message ?: "生成失败")
+                        messageRepo.markAssistantError(assistant.id, msg)
+                    }
+                sessionRepo.touch(sessionId)
+            } finally {
+                _state.value = _state.value.copy(isStreaming = false)
+            }
+        }
+    }
+
     fun rename(title: String) = viewModelScope.launch {
         sessionRepo.rename(sessionId, title)
         _state.value = _state.value.copy(title = title)

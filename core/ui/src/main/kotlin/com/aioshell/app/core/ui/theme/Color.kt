@@ -63,3 +63,11 @@ internal val DarkSurfaceContainer = Color(0xFF1C2221)
 internal val DarkSurfaceContainerHigh = Color(0xFF262C2B)
 internal val LightSurfaceContainer = Color(0xFFEEF4F2)
 internal val LightSurfaceContainerHigh = Color(0xFFE8EEEC)
+
+// ---- 语义色：成功 / 警告 / 代码块 ----
+internal val SuccL = Color(0xFF0F805C)
+internal val SuccD = Color(0xFF32D583)
+internal val WarnL = Color(0xFFB45309)
+internal val WarnD = Color(0xFFFDB022)
+internal val CodeL = Color(0xFFEFF1F3)
+internal val CodeD = Color(0xFF14171C)

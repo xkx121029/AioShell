@@ -27,7 +27,10 @@ class SessionRepository @Inject constructor(private val db: AppDatabase) {
     )
 
     val sessions: Flow<List<SessionSummary>> = dao.observeAll().map { list ->
-        list.map { SessionSummary(it.id, it.title, it.configId, it.createdAt, it.updatedAt) }
+        list.map { s ->
+            val preview = messageDao.getInSession(s.id).lastOrNull()?.content.orEmpty()
+            SessionSummary(s.id, s.title, s.configId, s.createdAt, s.updatedAt, preview)
+        }
     }
 
     suspend fun create(title: String = "新对话", configId: String): String {
@@ -90,6 +93,10 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
     suspend fun markAssistantDone(id: String) {
         val existing = dao.getById(id) ?: return
         dao.update(existing.copy(status = "DONE"))
+    }
+
+    suspend fun delete(id: String) {
+        dao.deleteById(id)
     }
 
     private suspend fun insert(sessionId: String, role: String, content: String): ChatMessage {

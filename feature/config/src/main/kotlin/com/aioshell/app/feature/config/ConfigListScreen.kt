@@ -42,7 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aioshell.app.core.data.model.ChatConfig
-import com.aioshell.app.core.ui.components.AioConfirmDialog
+import com.aioshell.app.core.ui.components.AppDialog
+import com.aioshell.app.core.ui.components.EmptyState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,7 +95,7 @@ fun ConfigListScreen(
     }
 
     pendingDelete?.let { cfg ->
-        AioConfirmDialog(
+        AppDialog(
             title = "删除配置",
             message = "确定删除「${cfg.name}」吗？该操作不可恢复。",
             onConfirm = {

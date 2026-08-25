@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 
 private val DarkColorScheme = darkColorScheme(
     primary = DarkPrimary,
@@ -82,10 +83,20 @@ fun AioShellTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
-        typography = AioTypography,
-        shapes = AioShapes,
-        content = content,
-    )
+    CompositionLocalProvider(
+        LocalAppColors provides (if (darkTheme) AppDarkColors.scheme else AppLightColors.scheme),
+    ) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
+            typography = AioTypography,
+            shapes = AppShapes.shapes,
+            content = content,
+        )
+    }
+}
+
+/** 业务层访问语义色 Token 的入口。 */
+object AppTheme {
+    val colors: AppColorScheme
+        @Composable get() = LocalAppColors.current
 }

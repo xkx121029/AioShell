@@ -22,9 +22,12 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -86,6 +90,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -579,7 +584,7 @@ private fun ActionItem(icon: ImageVector?, label: String, onClick: () -> Unit, t
     }
 }
 
-/** 优美玻璃态语音输入浮层：长按输入框呼出，液态玻璃卡片 + 声波脉冲 + 实时识别文本。 */
+/** 优美玻璃态语音输入浮层：长按输入框呼出，上滑取消，到达取消区时文字粒子漂浮。 */
 @Composable
 private fun VoiceInputOverlay(
     speechText: String,
@@ -589,6 +594,11 @@ private fun VoiceInputOverlay(
     onCancel: () -> Unit,
 ) {
     val c = AppTheme.colors
+    val density = LocalDensity.current
+    val cancelThresholdPx = with(density) { 120.dp.toPx() }
+    var dragY by remember { mutableStateOf(0f) } // 负值 = 向上拖动
+    val cancelPreview = dragY <= -cancelThresholdPx
+
     Dialog(
         onDismissRequest = onCancel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -604,50 +614,113 @@ private fun VoiceInputOverlay(
                 shadowElevation = 18.dp,
                 modifier = Modifier
                     .widthIn(max = 340.dp)
-                    .clip(RoundedCornerShape(32.dp)),
+                    .clip(RoundedCornerShape(32.dp))
+                    .offset(y = (dragY.coerceAtMost(0f)).dp)
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { dragY = 0f },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                dragY = (dragY + dragAmount.y).coerceAtLeast(0f)
+                            },
+                            onDragEnd = {
+                                // 上滑到取消区域后松手 → 取消；否则复位继续识别
+                                if (cancelPreview) onCancel() else dragY = 0f
+                            },
+                            onDragCancel = { dragY = 0f },
+                        )
+                    },
             ) {
                 Column(
-                    Modifier.padding(horizontal = 28.dp, vertical = 30.dp),
+                    Modifier.padding(horizontal = 28.dp, vertical = 26.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    // 顶部的上滑取消提示区
+                    val cancelColor = if (cancelPreview) c.error else c.secondary.copy(alpha = 0.5f)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(color = cancelColor.copy(alpha = 0.10f), shape = RoundedCornerShape(16.dp))
+                            .border(1.dp, cancelColor.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                            .padding(horizontal = 12.dp, vertical = 5.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = null,
+                            tint = cancelColor,
+                            modifier = Modifier.size(12.dp),
+                        )
+                        Spacer(Modifier.size(6.dp))
+                        Text(
+                            if (cancelPreview) "松手取消" else "上滑取消",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = cancelColor,
+                        )
+                    }
+                    Spacer(Modifier.height(14.dp))
+
                     // 声波脉冲 + 麦克风
                     Box(Modifier.size(132.dp), contentAlignment = Alignment.Center) {
                         if (isListening) SoundWaveRings(c.primary)
                         Surface(
                             shape = RoundedCornerShape(50),
-                            color = if (isListening) c.primary else c.surfaceVariant,
-                            contentColor = if (isListening) c.onPrimary else c.secondary,
+                            color = if (cancelPreview) c.error
+                            else if (isListening) c.primary else c.surfaceVariant,
+                            contentColor = if (isListening || cancelPreview) c.onPrimary else c.secondary,
                             shadowElevation = 8.dp,
                             modifier = Modifier.size(78.dp),
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Mic, contentDescription = null, modifier = Modifier.size(34.dp))
+                                Icon(
+                                    Icons.Filled.Mic,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(34.dp),
+                                )
                             }
                         }
                     }
 
-                    // 识别文本 / 状态文字
+                    // 识别文本：到达取消区未取消时 → 粒子漂浮效果
+                    if (speechText.isNotBlank()) {
+                        Box(Modifier.padding(top = 16.dp, bottom = 8.dp)) {
+                            if (cancelPreview) {
+                                FloatingParticleText(
+                                    text = speechText,
+                                    color = c.primary,
+                                    modifier = Modifier.widthIn(max = 280.dp),
+                                )
+                            } else {
+                                Text(
+                                    speechText,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = c.onSurface,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                )
+                            }
+                        }
+                    } else {
+                        Spacer(Modifier.height(24.dp))
+                    }
+
                     Text(
-                        text = when {
-                            speechText.isNotBlank() -> speechText
+                        when {
                             modelState is VoiceModelState.Downloading ->
                                 "正在下载语音模型 ${(modelState.progress * 100).toInt()}%…"
                             modelState is VoiceModelState.Error -> modelState.message
                             else -> if (isListening) "正在聆听…" else "准备就绪"
                         },
-                        style = if (speechText.isNotBlank()) MaterialTheme.typography.headlineSmall
-                        else MaterialTheme.typography.bodyLarge,
-                        color = if (modelState is VoiceModelState.Error) c.error else c.onSurface,
+                        style = if (modelState is VoiceModelState.Error) MaterialTheme.typography.bodyMedium
+                        else MaterialTheme.typography.bodyMedium,
+                        color = if (modelState is VoiceModelState.Error) c.error else c.secondary,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
                     )
                     Text(
-                        "长按输入框即可语音输入 · 识别在本地进行",
+                        "识别在本地进行 · 上滑取消",
                         style = MaterialTheme.typography.labelSmall,
-                        color = c.secondary,
+                        color = c.secondary.copy(alpha = 0.7f),
                     )
 
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(18.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         androidx.compose.material3.TextButton(onClick = onCancel) {
                             Text("取消", color = c.secondary)
@@ -662,6 +735,58 @@ private fun VoiceInputOverlay(
             }
         }
     }
+}
+
+/** 粒子漂浮文本：把每个字符作为粒子，在原位置轻轻漂浮。 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FloatingParticleText(
+    text: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        text.take(60).toCharArray().forEachIndexed { index, ch ->
+            if (ch == ' ' || ch == '\n') {
+                Spacer(Modifier.widthIn(min = 8.dp))
+                return@forEachIndexed
+            }
+            ParticleChar(ch.toString(), color, seed = index)
+        }
+    }
+}
+
+/** 单个字符粒子：缓慢上下/左右漂浮 + 透明度呼吸。 */
+@Composable
+private fun ParticleChar(char: String, color: Color, seed: Int) {
+    val t = rememberInfiniteTransition(label = "particle_$seed")
+    val dy by t.animateFloat(
+        initialValue = -2.5f,
+        targetValue = 2.5f,
+        animationSpec = infiniteRepeatable(tween(900 + (seed % 5) * 160), RepeatMode.Reverse),
+        label = "dy_$seed",
+    )
+    val dx by t.animateFloat(
+        initialValue = -1.5f,
+        targetValue = 1.5f,
+        animationSpec = infiniteRepeatable(tween(1100 + (seed % 4) * 200), RepeatMode.Reverse),
+        label = "dx_$seed",
+    )
+    val alpha by t.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(700 + (seed % 3) * 150), RepeatMode.Reverse),
+        label = "a_$seed",
+    )
+    Text(
+        char,
+        style = MaterialTheme.typography.headlineSmall,
+        color = color.copy(alpha = alpha),
+        modifier = Modifier.offset(x = dx.dp, y = dy.dp),
+    )
 }
 
 /** 声波脉冲环：录音时的轻量持续动画。 */

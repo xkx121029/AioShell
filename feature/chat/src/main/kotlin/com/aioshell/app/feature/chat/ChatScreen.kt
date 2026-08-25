@@ -82,6 +82,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
@@ -113,6 +116,7 @@ import com.aioshell.app.core.ui.components.AppButton
 import com.aioshell.app.core.ui.components.ButtonStyle
 import com.aioshell.app.core.ui.components.EmptyState
 import com.aioshell.app.core.ui.components.MessageBubble
+import com.aioshell.app.core.ui.theme.AppColorScheme
 import com.aioshell.app.core.ui.theme.AppSpacing
 import com.aioshell.app.core.ui.theme.AppTheme
 import com.aioshell.app.core.ui.util.copyTextToClipboard
@@ -584,7 +588,7 @@ private fun ActionItem(icon: ImageVector?, label: String, onClick: () -> Unit, t
     }
 }
 
-/** 优美玻璃态语音输入浮层：长按输入框呼出，上滑取消，到达取消区时文字粒子漂浮。 */
+/** 液态玻璃语音浮层：长按输入框呼出，上滑取消，到达取消区时文字粒子漂浮。 */
 @Composable
 private fun VoiceInputOverlay(
     speechText: String,
@@ -603,18 +607,21 @@ private fun VoiceInputOverlay(
         onDismissRequest = onCancel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        // 柔和渐变遮罩：中心透光、四周渐暗，衬托玻璃辉光
         Box(
-            Modifier.fillMaxSize().background(Color(0x66000000)).clickable(onClick = onCancel),
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        radius = with(density) { 760.dp.toPx() },
+                        colors = listOf(Color(0x00000000), Color(0x48000000), Color(0x99000000)),
+                    )
+                ),
             contentAlignment = Alignment.Center,
         ) {
-            Surface(
-                color = if (c.background.luminance() > 0.5f) Color(0xF7FAFDFB) else Color(0xF21A201E),
-                shape = RoundedCornerShape(32.dp),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
-                shadowElevation = 18.dp,
+            GlassSheet(
                 modifier = Modifier
                     .widthIn(max = 340.dp)
-                    .clip(RoundedCornerShape(32.dp))
                     .offset(y = (dragY.coerceAtMost(0f)).dp)
                     .pointerInput(Unit) {
                         detectDragGestures(
@@ -624,65 +631,25 @@ private fun VoiceInputOverlay(
                                 dragY = (dragY + dragAmount.y).coerceAtLeast(0f)
                             },
                             onDragEnd = {
-                                // 上滑到取消区域后松手 → 取消；否则复位继续识别
                                 if (cancelPreview) onCancel() else dragY = 0f
                             },
                             onDragCancel = { dragY = 0f },
                         )
                     },
+                shape = RoundedCornerShape(40.dp),
             ) {
                 Column(
-                    Modifier.padding(horizontal = 28.dp, vertical = 26.dp),
+                    Modifier.padding(horizontal = 26.dp, vertical = 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    // 顶部的上滑取消提示区
-                    val cancelColor = if (cancelPreview) c.error else c.secondary.copy(alpha = 0.5f)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .background(color = cancelColor.copy(alpha = 0.10f), shape = RoundedCornerShape(16.dp))
-                            .border(1.dp, cancelColor.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
-                            .padding(horizontal = 12.dp, vertical = 5.dp),
-                    ) {
-                        Icon(
-                            Icons.Filled.Refresh,
-                            contentDescription = null,
-                            tint = cancelColor,
-                            modifier = Modifier.size(12.dp),
-                        )
-                        Spacer(Modifier.size(6.dp))
-                        Text(
-                            if (cancelPreview) "松手取消" else "上滑取消",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = cancelColor,
-                        )
-                    }
-                    Spacer(Modifier.height(14.dp))
+                    GlassCancelPill(cancelPreview)
+                    Spacer(Modifier.height(16.dp))
 
-                    // 声波脉冲 + 麦克风
-                    Box(Modifier.size(132.dp), contentAlignment = Alignment.Center) {
-                        if (isListening) SoundWaveRings(c.primary)
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = if (cancelPreview) c.error
-                            else if (isListening) c.primary else c.surfaceVariant,
-                            contentColor = if (isListening || cancelPreview) c.onPrimary else c.secondary,
-                            shadowElevation = 8.dp,
-                            modifier = Modifier.size(78.dp),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Filled.Mic,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(34.dp),
-                                )
-                            }
-                        }
-                    }
+                    GlassMic(cancelPreview = cancelPreview, isListening = isListening)
 
                     // 识别文本：到达取消区未取消时 → 粒子漂浮效果
                     if (speechText.isNotBlank()) {
-                        Box(Modifier.padding(top = 16.dp, bottom = 8.dp)) {
+                        Box(Modifier.padding(top = 14.dp, bottom = 8.dp)) {
                             if (cancelPreview) {
                                 FloatingParticleText(
                                     text = speechText,
@@ -709,8 +676,7 @@ private fun VoiceInputOverlay(
                             modelState is VoiceModelState.Error -> modelState.message
                             else -> if (isListening) "正在聆听…" else "准备就绪"
                         },
-                        style = if (modelState is VoiceModelState.Error) MaterialTheme.typography.bodyMedium
-                        else MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = if (modelState is VoiceModelState.Error) c.error else c.secondary,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
@@ -721,19 +687,203 @@ private fun VoiceInputOverlay(
                     )
 
                     Spacer(Modifier.height(18.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        androidx.compose.material3.TextButton(onClick = onCancel) {
-                            Text("取消", color = c.secondary)
-                        }
-                        AppButton(
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        GlassButton(
+                            text = "取消",
+                            primary = false,
+                            onClick = onCancel,
+                            modifier = Modifier.weight(1f),
+                        )
+                        GlassButton(
                             text = "完成",
+                            primary = true,
                             onClick = onDone,
                             enabled = speechText.isNotBlank(),
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
             }
         }
+    }
+}
+
+/** 液态玻璃卡片：多层折射渐变 + 顶部内反射高光 + 细描边 + 外光晕。 */
+@Composable
+private fun GlassSheet(
+    modifier: Modifier,
+    shape: androidx.compose.ui.graphics.Shape,
+    content: @Composable () -> Unit,
+) {
+    val c = AppTheme.colors
+    val dark = c.background.luminance() < 0.5f
+    val density = LocalDensity.current
+    Box(
+        modifier
+            .shadow(
+                elevation = 28.dp,
+                shape = shape,
+                ambientColor = c.primary.copy(alpha = 0.22f),
+                spotColor = c.primary.copy(alpha = 0.30f),
+            )
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = if (dark) 0.16f else 0.55f),
+                        if (dark) Color(0x3323272F) else Color(0xE6FFFFFF),
+                        if (dark) Color(0x5523272F) else Color(0xD9FFFFFF),
+                    )
+                )
+            )
+            .border(1.dp, Color.White.copy(alpha = if (dark) 0.28f else 0.55f), shape),
+    ) {
+        // 底层半透表面
+        Box(Modifier.matchParentSize().background(c.surface.copy(alpha = if (dark) 0.55f else 0.60f)))
+        // 顶部内反射高光
+        Box(
+            Modifier.matchParentSize().background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = if (dark) 0.16f else 0.45f),
+                        Color.Transparent,
+                    ),
+                    startY = 0f,
+                    endY = with(density) { 140.dp.toPx() },
+                )
+            )
+        )
+        // 主色折射薄雾
+        Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(c.primary.copy(alpha = 0.10f), Color.Transparent))))
+        content()
+    }
+}
+
+/** 上滑取消提示胶囊（玻璃）。 */
+@Composable
+private fun GlassCancelPill(cancelPreview: Boolean) {
+    val c = AppTheme.colors
+    val tint = if (cancelPreview) c.error else c.secondary.copy(alpha = 0.55f)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(tint.copy(alpha = 0.12f))
+            .border(1.dp, tint.copy(alpha = 0.4f), RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+    ) {
+        Icon(
+            imageVector = if (cancelPreview) Icons.Filled.Mic else Icons.Filled.Refresh,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(13.dp),
+        )
+        Spacer(Modifier.size(6.dp))
+        Text(
+            if (cancelPreview) "松手取消" else "上滑取消",
+            style = MaterialTheme.typography.labelSmall,
+            color = tint,
+        )
+    }
+}
+
+/** 液态玻璃麦克风：玻璃球体高光 + 声波脉冲 + 外缘辉光。 */
+@Composable
+private fun GlassMic(cancelPreview: Boolean, isListening: Boolean) {
+    val c = AppTheme.colors
+    val active = isListening && !cancelPreview
+    val density = LocalDensity.current
+    val circlePx = with(density) { 80.dp.toPx() }
+    Box(Modifier.size(140.dp), contentAlignment = Alignment.Center) {
+        if (active) SoundWaveRings(c.primary)
+
+        // 外缘辉光
+        Box(
+            Modifier
+                .size(96.dp)
+                .shadow(18.dp, RoundedCornerShape(48), spotColor = c.primary.copy(alpha = if (active) 0.55f else 0.08f)),
+        )
+        // 玻璃球体
+        Box(
+            Modifier
+                .size(80.dp)
+                .clip(RoundedCornerShape(40.dp))
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = if (cancelPreview || active) 0.9f else 0.75f),
+                            baseColor(c, cancelPreview, active),
+                        ),
+                        center = Offset(circlePx * 0.32f, circlePx * 0.24f),
+                        radius = circlePx,
+                    )
+                )
+                .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(40.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Mic,
+                contentDescription = null,
+                tint = glassIconColor(c, cancelPreview, active),
+                modifier = Modifier.size(34.dp),
+            )
+        }
+        // 球体顶部受光弧
+        Box(
+            Modifier
+                .size(80.dp)
+                .clip(RoundedCornerShape(40.dp))
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color.White.copy(alpha = 0.55f), Color.Transparent),
+                        center = Offset(circlePx * 0.5f, circlePx * 0.08f),
+                        radius = circlePx * 0.6f,
+                    )
+                )
+        )
+    }
+}
+
+private fun baseColor(c: AppColorScheme, cancelPreview: Boolean, active: Boolean): Color =
+    if (cancelPreview) c.error else if (active) c.primary else c.surfaceVariant
+
+private fun glassIconColor(c: AppColorScheme, cancelPreview: Boolean, active: Boolean): Color =
+    if (cancelPreview || active) c.onPrimary else c.secondary
+
+/** 玻璃胶囊按钮。 */
+@Composable
+private fun GlassButton(
+    text: String,
+    primary: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val c = AppTheme.colors
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+        modifier = modifier
+            .clip(RoundedCornerShape(26.dp))
+            .background(
+                if (primary) {
+                    Brush.linearGradient(listOf(c.primary, c.primary.copy(alpha = 0.82f)))
+                } else {
+                    Brush.linearGradient(listOf(Color.White.copy(alpha = 0.20f), Color.White.copy(alpha = 0.06f)))
+                }
+            )
+            .border(1.dp, Color.White.copy(alpha = if (primary) 0.6f else 0.3f), RoundedCornerShape(26.dp))
+            .clickable(enabled = enabled) { onClick() }
+            .padding(vertical = 12.dp),
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (primary) c.onPrimary else c.onSurface,
+        )
     }
 }
 

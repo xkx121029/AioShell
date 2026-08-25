@@ -6,12 +6,22 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -69,8 +79,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -126,18 +139,23 @@ fun ChatScreen(
     }
 
     val voiceModelState by viewModel.voiceModelState.collectAsStateWithLifecycle()
+    var showVoiceDialog by remember { mutableStateOf(false) }
 
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) viewModel.toggleVoice { recognized -> appendSpeech(input, recognized) { input = it } }
+        if (granted) {
+            viewModel.toggleVoice { }
+            showVoiceDialog = true
+        }
     }
 
-    fun onMicClick() {
+    fun startVoice() {
         val record = android.Manifest.permission.RECORD_AUDIO
         val granted = ContextCompat.checkSelfPermission(context, record) == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (granted) {
-            viewModel.toggleVoice { recognized -> appendSpeech(input, recognized) { input = it } }
+            viewModel.toggleVoice { }
+            showVoiceDialog = true
         } else {
             micPermission.launch(record)
         }
@@ -315,7 +333,7 @@ fun ChatScreen(
                 canSend = ui.hasConfig,
                 isListening = ui.isListening,
                 onPickImage = ::launchPhotoPicker,
-                onVoiceToggle = ::onMicClick,
+                onVoiceToggle = ::startVoice,
                 onSend = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.send(input)
@@ -328,6 +346,22 @@ fun ChatScreen(
 
     viewerPath?.let { path ->
         ImageViewerDialog(path = path, onDismiss = { viewerPath = null })
+    }
+
+    if (showVoiceDialog) {
+        VoiceInputOverlay(
+            speechText = ui.speechText,
+            isListening = ui.isListening,
+            modelState = voiceModelState,
+            onDone = {
+                showVoiceDialog = false
+                viewModel.toggleVoice { recognized -> input = recognized }
+            },
+            onCancel = {
+                showVoiceDialog = false
+                viewModel.cancelVoice()
+            },
+        )
     }
 
     actionTarget?.let { msg ->
@@ -396,8 +430,18 @@ private fun InputBar(
             OutlinedTextField(
                 value = value,
                 onValueChange = onChange,
-                modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 120.dp),
-                placeholder = { Text("输入消息…") },
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp, max = 120.dp)
+                    // 长按输入框 → 语音输入（不拦截单击聚焦/打字）
+                    .pointerInput(onVoiceToggle) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val longPress = awaitLongPressOrCancellation(down.id)
+                            if (longPress != null) onVoiceToggle()
+                        }
+                    },
+                placeholder = { Text(if (isListening) "正在聆听…" else "输入消息…") },
                 maxLines = 5,
                 shape = MaterialTheme.shapes.large,
                 colors = OutlinedTextFieldDefaults.colors(
@@ -535,6 +579,109 @@ private fun ActionItem(icon: ImageVector?, label: String, onClick: () -> Unit, t
     }
 }
 
-private fun appendSpeech(current: String, recognized: String, set: (String) -> Unit) {
-    set(if (current.isBlank()) recognized else "$current $recognized")
+/** 优美玻璃态语音输入浮层：长按输入框呼出，液态玻璃卡片 + 声波脉冲 + 实时识别文本。 */
+@Composable
+private fun VoiceInputOverlay(
+    speechText: String,
+    isListening: Boolean,
+    modelState: VoiceModelState,
+    onDone: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val c = AppTheme.colors
+    Dialog(
+        onDismissRequest = onCancel,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier.fillMaxSize().background(Color(0x66000000)).clickable(onClick = onCancel),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                color = if (c.background.luminance() > 0.5f) Color(0xF7FAFDFB) else Color(0xF21A201E),
+                shape = RoundedCornerShape(32.dp),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
+                shadowElevation = 18.dp,
+                modifier = Modifier
+                    .widthIn(max = 340.dp)
+                    .clip(RoundedCornerShape(32.dp)),
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 28.dp, vertical = 30.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    // 声波脉冲 + 麦克风
+                    Box(Modifier.size(132.dp), contentAlignment = Alignment.Center) {
+                        if (isListening) SoundWaveRings(c.primary)
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (isListening) c.primary else c.surfaceVariant,
+                            contentColor = if (isListening) c.onPrimary else c.secondary,
+                            shadowElevation = 8.dp,
+                            modifier = Modifier.size(78.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Mic, contentDescription = null, modifier = Modifier.size(34.dp))
+                            }
+                        }
+                    }
+
+                    // 识别文本 / 状态文字
+                    Text(
+                        text = when {
+                            speechText.isNotBlank() -> speechText
+                            modelState is VoiceModelState.Downloading ->
+                                "正在下载语音模型 ${(modelState.progress * 100).toInt()}%…"
+                            modelState is VoiceModelState.Error -> modelState.message
+                            else -> if (isListening) "正在聆听…" else "准备就绪"
+                        },
+                        style = if (speechText.isNotBlank()) MaterialTheme.typography.headlineSmall
+                        else MaterialTheme.typography.bodyLarge,
+                        color = if (modelState is VoiceModelState.Error) c.error else c.onSurface,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
+                    )
+                    Text(
+                        "长按输入框即可语音输入 · 识别在本地进行",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = c.secondary,
+                    )
+
+                    Spacer(Modifier.height(20.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        androidx.compose.material3.TextButton(onClick = onCancel) {
+                            Text("取消", color = c.secondary)
+                        }
+                        AppButton(
+                            text = "完成",
+                            onClick = onDone,
+                            enabled = speechText.isNotBlank(),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 声波脉冲环：录音时的轻量持续动画。 */
+@Composable
+private fun SoundWaveRings(color: Color) {
+    val transition = rememberInfiniteTransition(label = "sonar")
+    val radius by transition.animateFloat(
+        initialValue = 36f,
+        targetValue = 64f,
+        animationSpec = infiniteRepeatable(tween(1400), RepeatMode.Restart),
+        label = "sonar_r",
+    )
+    val alpha by transition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(1400), RepeatMode.Restart),
+        label = "sonar_a",
+    )
+    Canvas(Modifier.size(132.dp)) {
+        drawCircle(color = color, radius = radius, alpha = alpha, style = Stroke(width = 2.dp.toPx()))
+        drawCircle(color = color.copy(alpha = 0.25f), radius = radius * 0.7f, style = Stroke(width = 1.dp.toPx()))
+    }
 }

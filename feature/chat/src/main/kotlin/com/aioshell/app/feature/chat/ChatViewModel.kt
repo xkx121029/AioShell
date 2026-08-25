@@ -252,5 +252,13 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /** 取消语音输入：停止识别且不把结果回填输入框。 */
+    fun cancelVoice() {
+        voiceJob?.cancel()
+        voiceJob = null
+        speechAccumulated = ""
+        _state.value = _state.value.copy(isListening = false, speechText = "")
+    }
+
     private companion object { const val MAX_IMAGES = 4 }
 }

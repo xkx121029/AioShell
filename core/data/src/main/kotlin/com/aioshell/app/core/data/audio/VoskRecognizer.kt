@@ -15,7 +15,7 @@ import org.vosk.Model
 import org.vosk.Recognizer
 
 /** 识别结果。 */
-data class RecognitionResult(val text: String, val finalized: Boolean)
+data class RecognitionResult(val text: String, val finalized: Boolean, val volume: Float = 0f)
 
 /**
  * Vosk 离线语音识别运行器：AudioRecord 采集 16k PCM → Recognizer 半实时识别。
@@ -52,13 +52,14 @@ object VoskRecognizer {
                     if (isClosedForSend) break
                     val read = audioRecord.read(shorts, 0, shorts.size)
                     if (read < 0) break
+                    val volume = computeVolume(shorts, read)
                     if (recognizer.acceptWaveForm(shorts, read)) {
                         val res = recognizer.result
                         val text = parseText(res)
-                        if (text.isNotEmpty()) trySend(RecognitionResult(text, finalized = true))
+                        if (text.isNotEmpty()) trySend(RecognitionResult(text, finalized = true, volume = volume))
                     } else {
                         val partial = parseText(recognizer.partialResult)
-                        if (partial.isNotEmpty()) trySend(RecognitionResult(partial, finalized = false))
+                        trySend(RecognitionResult(partial, finalized = false, volume = volume))
                     }
                 }
             } catch (e: Exception) {
@@ -70,6 +71,17 @@ object VoskRecognizer {
             }
         }
         awaitClose { job.cancel() }
+    }
+
+    /** 计算当前帧音量（RMS 归一化 0..1）。 */
+    private fun computeVolume(shorts: ShortArray, read: Int): Float {
+        if (read <= 0) return 0f
+        var sum = 0.0
+        for (i in 0 until read) {
+            val v = shorts[i].toDouble() / 32768.0
+            sum += v * v
+        }
+        return (kotlin.math.sqrt(sum / read) * 3.0).coerceIn(0.0, 1.0).toFloat()
     }
 
     /** 从 Vosk JSON 结果提取文本。 */

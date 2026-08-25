@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -39,6 +40,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -84,6 +86,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -240,7 +243,23 @@ fun ChatScreen(
                     title = "开始一段新对话",
                     modifier = Modifier.weight(1f),
                 )
-                else -> Box(Modifier.weight(1f).fillMaxWidth()) {
+                else -> if (showVoiceDialog) {
+                    VoiceLightOverlay(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        speechText = ui.speechText,
+                        soundLevel = ui.soundLevel,
+                        isListening = ui.isListening,
+                        modelState = voiceModelState,
+                        onDone = {
+                            showVoiceDialog = false
+                            viewModel.toggleVoice { recognized -> input = recognized }
+                        },
+                        onCancel = {
+                            showVoiceDialog = false
+                            viewModel.cancelVoice()
+                        },
+                    )
+                } else Box(Modifier.weight(1f).fillMaxWidth()) {
                     // 流式生成动态状态：告知读屏用户
                     if (ui.isStreaming) {
                         Text(
@@ -355,22 +374,6 @@ fun ChatScreen(
 
     viewerPath?.let { path ->
         ImageViewerDialog(path = path, onDismiss = { viewerPath = null })
-    }
-
-    if (showVoiceDialog) {
-        VoiceInputOverlay(
-            speechText = ui.speechText,
-            isListening = ui.isListening,
-            modelState = voiceModelState,
-            onDone = {
-                showVoiceDialog = false
-                viewModel.toggleVoice { recognized -> input = recognized }
-            },
-            onCancel = {
-                showVoiceDialog = false
-                viewModel.cancelVoice()
-            },
-        )
     }
 
     actionTarget?.let { msg ->
@@ -958,5 +961,145 @@ private fun SoundWaveRings(color: Color) {
     Canvas(Modifier.size(132.dp)) {
         drawCircle(color = color, radius = radius, alpha = alpha, style = Stroke(width = 2.dp.toPx()))
         drawCircle(color = color.copy(alpha = 0.25f), radius = radius * 0.7f, style = Stroke(width = 1.dp.toPx()))
+    }
+}
+
+/** 语音输入的光场浮层：输入框处椭圆光源 + 三根竖向声波条 + 空中实时识别文字。 */
+@Composable
+private fun VoiceLightOverlay(
+    modifier: Modifier,
+    speechText: String,
+    soundLevel: Float,
+    isListening: Boolean,
+    modelState: VoiceModelState,
+    onDone: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val c = AppTheme.colors
+    val density = LocalDensity.current
+    val cancelThresholdPx = with(density) { 96.dp.toPx() }
+    var dragY by remember { mutableStateOf(0f) } // 负值 = 向上拖动
+    val cancelPreview = dragY <= -cancelThresholdPx
+
+    Box(
+        modifier
+            .offset(y = (dragY.coerceAtMost(0f)).dp)
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { dragY = 0f },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        dragY = (dragY + amount.y).coerceAtLeast(0f)
+                    },
+                    onDragEnd = { if (cancelPreview) onCancel() else dragY = 0f },
+                    onDragCancel = { dragY = 0f },
+                )
+            },
+    ) {
+        // 输入框处光源：椭圆由下至上渲染、颜色渐淡
+        SourceLight(
+            color = c.primary,
+            level = soundLevel,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+
+        // 三根竖向声波条
+        SoundBars(
+            level = soundLevel,
+            active = isListening,
+            color = c.primary,
+            modifier = Modifier.align(Alignment.BottomCenter).offset(y = (-18).dp),
+        )
+
+        // 空中实时识别文字（随识别累加）
+        if (speechText.isNotBlank()) {
+            Box(Modifier.align(Alignment.Center).padding(horizontal = 24.dp)) {
+                if (cancelPreview) {
+                    FloatingParticleText(text = speechText, color = c.primary, modifier = Modifier.widthIn(max = 300.dp))
+                } else {
+                    Text(
+                        speechText,
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = c.primary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.shadow(14.dp, spotColor = c.primary.copy(alpha = 0.45f)),
+                    )
+                }
+            }
+        }
+
+        // 顶部：上滑取消提示 + 完成
+        Row(
+            Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            GlassCancelPill(cancelPreview)
+            GlassButton(text = "完成", primary = true, onClick = onDone, enabled = speechText.isNotBlank())
+        }
+
+        // 底部状态提示
+        Text(
+            when {
+                modelState is VoiceModelState.Downloading -> "正在下载语音模型 ${(modelState.progress * 100).toInt()}%…"
+                modelState is VoiceModelState.Error -> modelState.message
+                else -> "上滑取消 · 识别在本地进行"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = if (modelState is VoiceModelState.Error) c.error else c.secondary,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 76.dp),
+        )
+    }
+}
+
+/** 输入框处的椭圆光源：底部最亮，向上渐淡。 */
+@Composable
+private fun SourceLight(color: Color, level: Float, modifier: Modifier = Modifier) {
+    Canvas(
+        modifier
+            .fillMaxWidth()
+            .height(176.dp),
+    ) {
+        val cx = size.width / 2f
+        val bottom = size.height
+        val glow = (0.30f + level * 0.30f).coerceIn(0f, 0.60f)
+        drawOval(
+            brush = Brush.radialGradient(
+                center = Offset(cx, bottom),
+                radius = size.width,
+                colors = listOf(
+                    color.copy(alpha = glow),
+                    color.copy(alpha = glow * 0.35f),
+                    Color.Transparent,
+                ),
+            ),
+            topLeft = Offset(cx - size.width * 0.7f, bottom - size.height * 0.6f),
+            size = Size(size.width * 1.4f, size.height * 1.4f),
+        )
+    }
+}
+
+/** 三根竖向声波条：高度随语音音量实时变化。 */
+@Composable
+private fun SoundBars(level: Float, active: Boolean, color: Color, modifier: Modifier = Modifier) {
+    val factors = listOf(1.0f, 0.62f, 1.16f)
+    Row(
+        modifier.height(66.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        factors.forEachIndexed { index, factor ->
+            val target = if (active) {
+                (0.22f + 0.66f * level * factor).coerceIn(0.05f, 1f)
+            } else 0.18f
+            val h by animateFloatAsState(targetValue = 14f + 50f * target, label = "bar_$index")
+            Box(
+                Modifier
+                    .width(9.dp)
+                    .height(h.dp)
+                    .clip(RoundedCornerShape(4.5.dp))
+                    .background(Brush.verticalGradient(listOf(color, color.copy(alpha = 0.4f)))),
+            )
+        }
     }
 }

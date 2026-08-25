@@ -46,6 +46,7 @@ data class ChatUiState(
     val pendingImages: List<UiImage> = emptyList(),
     val isListening: Boolean = false,
     val speechText: String = "",
+    val soundLevel: Float = 0f,
 )
 
 @HiltViewModel
@@ -233,21 +234,22 @@ class ChatViewModel @Inject constructor(
             return
         }
         speechAccumulated = ""
-        _state.value = _state.value.copy(isListening = true)
+        _state.value = _state.value.copy(isListening = true, soundLevel = 0f)
         voiceJob = viewModelScope.launch {
             runCatching { modelManager.ensureModel() }
                 .onSuccess { model ->
                     VoskRecognizer.listen(model).collect { r ->
+                        _state.value = _state.value.copy(soundLevel = r.volume)
                         if (r.finalized) {
                             speechAccumulated += r.text
                             _state.value = _state.value.copy(speechText = speechAccumulated)
-                        } else {
+                        } else if (r.text.isNotEmpty()) {
                             _state.value = _state.value.copy(speechText = r.text)
                         }
                     }
                 }
                 .onFailure {
-                    _state.value = _state.value.copy(isListening = false, speechText = "")
+                    _state.value = _state.value.copy(isListening = false, speechText = "", soundLevel = 0f)
                 }
         }
     }

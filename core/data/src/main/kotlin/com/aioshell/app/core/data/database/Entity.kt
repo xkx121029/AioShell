@@ -26,4 +26,19 @@ data class MessageEntity(
     val content: String,
     val createdAt: Long,
     val status: String,
+    val reasoning: String? = null,
+    val reasoningDurationMs: Long? = null,
+)
+
+/** 消息附件实体（本地图片引用）。 */
+@Entity(
+    tableName = "message_attachments",
+    indices = [Index("messageId")],
+)
+data class MessageAttachmentEntity(
+    @PrimaryKey val id: String,
+    val messageId: String,
+    val localPath: String,
+    val mimeType: String,
+    val orderIndex: Int,
 )

@@ -28,6 +28,7 @@ data class ConfigFormUi(
     val baseUrlError: String? = null,
     val modelError: String? = null,
     val apiKeyError: String? = null,
+    val reasoningEnabled: Boolean = true,
 )
 
 data class ConfigEditState(
@@ -66,6 +67,7 @@ class ConfigEditViewModel @Inject constructor(
                             maxTokens = cfg.maxTokens.toString(),
                             topP = cfg.topP.toString(),
                             loaded = true,
+                            reasoningEnabled = cfg.reasoningEnabled,
                         ),
                     )
                 }
@@ -123,7 +125,12 @@ class ConfigEditViewModel @Inject constructor(
             temperature = f.temperature.toFloatOrNull()?.coerceIn(0f, 2f) ?: 0.7f,
             maxTokens = f.maxTokens.toIntOrNull()?.coerceIn(1, 8192) ?: 2048,
             topP = f.topP.toFloatOrNull()?.coerceIn(0f, 1f) ?: 1.0f,
+            reasoningEnabled = f.reasoningEnabled,
         )
+    }
+
+    fun setReasoning(enabled: Boolean) {
+        _state.value = _state.value.copy(form = _state.value.form.copy(reasoningEnabled = enabled))
     }
 
     fun testConnection() {

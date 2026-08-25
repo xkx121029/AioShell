@@ -71,3 +71,13 @@ internal val WarnL = Color(0xFFB45309)
 internal val WarnD = Color(0xFFFDB022)
 internal val CodeL = Color(0xFFEFF1F3)
 internal val CodeD = Color(0xFF14171C)
+
+// ---- 代码语法高亮色（浅色 / 深色） ----
+internal val CodeKwL = Color(0xFFCF222E)
+internal val CodeKwD = Color(0xFFFF7B72)
+internal val CodeStrL = Color(0xFF0A3069)
+internal val CodeStrD = Color(0xFFA5D6FF)
+internal val CodeCmtL = Color(0xFF6E7781)
+internal val CodeCmtD = Color(0xFF8B949E)
+internal val CodeNumL = Color(0xFF0550AE)
+internal val CodeNumD = Color(0xFF79C0FF)

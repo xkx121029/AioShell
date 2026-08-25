@@ -1,10 +1,14 @@
 package com.aioshell.app.feature.chat
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -16,22 +20,27 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -57,9 +66,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -72,7 +83,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.aioshell.app.core.data.model.ChatMessage
+import com.aioshell.app.core.data.model.MessageAttachment
 import com.aioshell.app.core.data.model.MessageRole
 import com.aioshell.app.core.data.model.MessageStatus
 import com.aioshell.app.core.ui.components.AppButton
@@ -97,8 +110,17 @@ fun ChatScreen(
     val haptic = LocalHapticFeedback.current
     var input by rememberSaveable { mutableStateOf("") }
     var actionTarget by remember { mutableStateOf<ChatMessage?>(null) }
+    var viewerPath by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+
+    val pickImages = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 4),
+    ) { uris -> viewModel.onImagesPicked(uris) }
+
+    fun launchPhotoPicker() {
+        pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
 
     // 是否停留在底部（用于智能跟随与"回到底部"按钮）
     val isAtBottom by remember {
@@ -136,6 +158,18 @@ fun ChatScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
+                },
+                actions = {
+                    // 思考模式快捷开关（模型级）
+                    if (ui.hasConfig) {
+                        IconButton(onClick = viewModel::toggleReasoning) {
+                            Icon(
+                                Icons.Outlined.Psychology,
+                                contentDescription = if (ui.reasoningEnabled) "关闭思考模式" else "开启思考模式",
+                                tint = if (ui.reasoningEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
@@ -175,6 +209,25 @@ fun ChatScreen(
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     ) {
                         items(ui.messages, key = { it.id }) { msg ->
+                            // AI 消息思考面板（仅当模型开启且存在思考内容）
+                            if (msg.role == MessageRole.ASSISTANT) {
+                                val rc = msg.reasoningContent
+                                if (rc != null && rc.isNotBlank() && ui.reasoningEnabled) {
+                                    var expanded by remember(msg.id) { mutableStateOf(false) }
+                                    ReasoningPanel(
+                                        reasoning = rc,
+                                        isStreaming = msg.status == MessageStatus.SENDING,
+                                        durationMs = msg.reasoningDurationMs?.takeIf { it > 0 },
+                                        expanded = expanded,
+                                        onToggle = { expanded = !expanded },
+                                        modifier = Modifier.padding(bottom = 4.dp),
+                                    )
+                                }
+                            }
+                            // 用户消息附件（图片回显）
+                            if (msg.role == MessageRole.USER && msg.attachments.isNotEmpty()) {
+                                AttachmentRow(msg.attachments, onOpen = { viewerPath = it })
+                            }
                             MessageBubble(
                                 content = msg.content,
                                 isUser = msg.role == MessageRole.USER,
@@ -204,6 +257,13 @@ fun ChatScreen(
                 }
             }
 
+            if (ui.pendingImages.isNotEmpty()) {
+                AttachmentPreviewBar(
+                    images = ui.pendingImages,
+                    onRemove = viewModel::removePendingImage,
+                )
+            }
+
             if (!ui.hasConfig) NoConfigBanner(onGoConfig)
 
             InputBar(
@@ -211,6 +271,7 @@ fun ChatScreen(
                 onChange = { input = it },
                 isStreaming = ui.isStreaming,
                 canSend = ui.hasConfig,
+                onPickImage = ::launchPhotoPicker,
                 onSend = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.send(input)
@@ -219,6 +280,10 @@ fun ChatScreen(
                 onStop = viewModel::stopStreaming,
             )
         }
+    }
+
+    viewerPath?.let { path ->
+        ImageViewerDialog(path = path, onDismiss = { viewerPath = null })
     }
 
     actionTarget?.let { msg ->
@@ -261,6 +326,7 @@ private fun InputBar(
     onChange: (String) -> Unit,
     isStreaming: Boolean,
     canSend: Boolean,
+    onPickImage: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -270,7 +336,10 @@ private fun InputBar(
         shape = MaterialTheme.shapes.large,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+        Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)) {
+            IconButton(onClick = onPickImage) {
+                Icon(Icons.Filled.AddPhotoAlternate, "添加图片", tint = c.secondary)
+            }
             OutlinedTextField(
                 value = value,
                 onValueChange = onChange,
@@ -289,12 +358,80 @@ private fun InputBar(
             } else {
                 androidx.compose.material3.Button(
                     onClick = onSend,
-                    enabled = canSend && value.isNotBlank(),
+                    enabled = canSend && (value.isNotBlank() || true),
                     modifier = Modifier.padding(bottom = 4.dp),
                     shape = RoundedCornerShape(50),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                 ) { Icon(Icons.Filled.Send, contentDescription = "发送") }
             }
+        }
+    }
+}
+
+/** 历史/回显消息的附件图片行。 */
+@Composable
+private fun AttachmentRow(attachments: List<MessageAttachment>, onOpen: (String) -> Unit) {
+    LazyRow(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(attachments) { a ->
+            Box(Modifier.widthIn(max = 150.dp)) {
+                AsyncImage(
+                    model = java.io.File(a.localPath),
+                    contentDescription = "消息图片",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(120.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onOpen(a.localPath) },
+                )
+            }
+        }
+    }
+}
+
+/** 待发送图片预览。 */
+@Composable
+private fun AttachmentPreviewBar(images: List<UiImage>, onRemove: (String) -> Unit) {
+    LazyRow(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(images, key = { it.path }) { img ->
+            Box {
+                AsyncImage(
+                    model = java.io.File(img.path),
+                    contentDescription = "已选图片",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(72.dp).clip(RoundedCornerShape(12.dp)),
+                )
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "移除图片",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(20.dp)
+                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                        .clickable { onRemove(img.path) },
+                )
+            }
+        }
+    }
+}
+
+/** 图片全屏查看器。 */
+@Composable
+private fun ImageViewerDialog(path: String, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)).clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center,
+        ) {
+            AsyncImage(
+                model = java.io.File(path),
+                contentDescription = "查看图片",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+            )
         }
     }
 }

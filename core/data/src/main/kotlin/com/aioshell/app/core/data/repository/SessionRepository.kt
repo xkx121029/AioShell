@@ -74,6 +74,7 @@ class SessionRepository @Inject constructor(private val db: AppDatabase) {
 class MessageRepository @Inject constructor(private val db: AppDatabase) {
 
     private val dao = db.messageDao()
+    private val attachmentDao = db.messageAttachmentDao()
 
     fun observeInSession(sessionId: String): Flow<List<ChatMessage>> =
         dao.observeInSession(sessionId).map { list -> list.map { it.toDomain() } }
@@ -81,8 +82,25 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
     suspend fun getInSession(sessionId: String): List<ChatMessage> =
         dao.getInSession(sessionId).map { it.toDomain() }
 
-    suspend fun addUserMessage(sessionId: String, content: String): ChatMessage =
-        insert(sessionId, "user", content)
+    suspend fun getById(id: String): ChatMessage? = dao.getById(id)?.toDomain()
+
+    suspend fun addUserMessage(sessionId: String, content: String, attachmentPaths: List<String> = emptyList()): ChatMessage {
+        val msg = insert(sessionId, "user", content)
+        if (attachmentPaths.isNotEmpty()) {
+            attachmentDao.insertAll(
+                attachmentPaths.mapIndexed { idx, path ->
+                    com.aioshell.app.core.data.database.MessageAttachmentEntity(
+                        id = UUID.randomUUID().toString(),
+                        messageId = msg.id,
+                        localPath = path,
+                        mimeType = "image/jpeg",
+                        orderIndex = idx,
+                    )
+                }
+            )
+        }
+        return msg
+    }
 
     suspend fun addAssistantMessage(sessionId: String, initial: String = ""): ChatMessage =
         insert(sessionId, "assistant", initial)
@@ -90,6 +108,11 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
     suspend fun updateAssistantText(id: String, content: String) {
         val existing = dao.getById(id) ?: return
         dao.update(existing.copy(content = content))
+    }
+
+    suspend fun updateAssistantReasoning(id: String, reasoning: String, durationMs: Long) {
+        val existing = dao.getById(id) ?: return
+        dao.update(existing.copy(reasoning = reasoning, reasoningDurationMs = durationMs))
     }
 
     suspend fun markAssistantError(id: String, errorText: String) {
@@ -104,6 +127,7 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
 
     suspend fun delete(id: String) {
         dao.deleteById(id)
+        attachmentDao.deleteByMessage(id)
     }
 
     private suspend fun insert(sessionId: String, role: String, content: String): ChatMessage {
@@ -119,11 +143,17 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
         return entity.toDomain()
     }
 
-    private fun com.aioshell.app.core.data.database.MessageEntity.toDomain(): ChatMessage {
+    private suspend fun com.aioshell.app.core.data.database.MessageEntity.toDomain(): ChatMessage {
         val r = runCatching { com.aioshell.app.core.data.model.MessageRole.valueOf(role) }
             .getOrDefault(com.aioshell.app.core.data.model.MessageRole.ASSISTANT)
         val s = runCatching { com.aioshell.app.core.data.model.MessageStatus.valueOf(status) }
             .getOrDefault(com.aioshell.app.core.data.model.MessageStatus.DONE)
-        return ChatMessage(id, sessionId, r, content, createdAt, s)
+        val attachments = attachmentDao.getForMessages(listOf(id))
+            .map { com.aioshell.app.core.data.model.MessageAttachment(it.id, it.localPath, it.mimeType, it.orderIndex) }
+        return ChatMessage(
+            id = id, sessionId = sessionId, role = r, content = content, createdAt = createdAt,
+            status = s, reasoningContent = reasoning, reasoningDurationMs = reasoningDurationMs,
+            attachments = attachments,
+        )
     }
 }

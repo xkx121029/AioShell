@@ -24,6 +24,8 @@ dependencies {
     implementation(project(":core:data"))
     implementation(project(":core:ui"))
 
+    implementation(libs.coil.compose)
+
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.foundation)

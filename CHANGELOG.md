@@ -2,6 +2,31 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 规范，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.2.2] - 2026-08-25
+
+### 新增：代码块增强
+- 自研轻量语法高亮（关键字 / 字符串 / 注释 / 数字），覆盖 Kotlin / Java / Python / JS / TS / JSON / Bash / SQL
+- 代码块一键复制（复制反馈对勾，2s 恢复）
+- 超过 20 行代码默认折叠，可展开全部
+- 语言标签显示，超长代码横向滚动
+- 高亮结果缓存，超长码块降级纯文本
+
+### 新增：思考模式
+- SSE 解析思考内容（兼容 `reasoning_content` / `reasoning` / `thinking` 字段）
+- 思考过程流式展示、可折叠，思考耗时统计
+- 模型级开关（配置档案），对话页顶栏快捷开关 + 配置页主开关双入口，状态一致
+- 数据库迁移 V2：message 表新增 reasoning / reasoningDurationMs
+
+### 新增：多模态输入
+- 系统 Photo Picker 选图（免权限，上限 4 张）
+- 图片压缩（最长边 1536 / JPEG / 质量 80）并存入私有目录
+- OpenAI 兼容视觉协议构造（text + image_url base64）
+- 输入框附件缩略图预览与移除、历史消息图片回显、点击全屏查看
+- 数据库迁移 V3：新增 message_attachments 表
+
+### 构建
+- 版本号提升至 1.2.2（versionCode 4），数据库版本升至 V3
+
 ## [1.1.2] - 2026-08-25
 
 ### 修复

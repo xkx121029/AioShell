@@ -130,6 +130,26 @@ fun ConfigEditScreen(
                 )
             }
 
+            ConfigSection("思考模式") {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("展示思考过程", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "当该模型返回思考内容时，在对话中展示",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.secondary,
+                        )
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = f.reasoningEnabled,
+                        onCheckedChange = viewModel::setReasoning,
+                    )
+                }
+            }
+
             s.testMessage?.let { msg ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

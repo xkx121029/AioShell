@@ -60,3 +60,21 @@ interface MessageDao {
     @Query("DELETE FROM message WHERE id = :id")
     suspend fun deleteById(id: String)
 }
+
+@Dao
+interface MessageAttachmentDao {
+    @Query("SELECT * FROM message_attachments WHERE messageId = :messageId ORDER BY orderIndex ASC")
+    fun observeForMessage(messageId: String): Flow<List<MessageAttachmentEntity>>
+
+    @Query("SELECT * FROM message_attachments WHERE messageId IN (:messageIds) ORDER BY orderIndex ASC")
+    suspend fun getForMessages(messageIds: List<String>): List<MessageAttachmentEntity>
+
+    @Insert
+    suspend fun insertAll(entities: List<MessageAttachmentEntity>)
+
+    @Query("DELETE FROM message_attachments WHERE messageId = :messageId")
+    suspend fun deleteByMessage(messageId: String)
+
+    @Query("DELETE FROM message_attachments WHERE messageId IN (SELECT id FROM message WHERE sessionId = :sessionId)")
+    suspend fun deleteBySession(sessionId: String)
+}

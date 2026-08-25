@@ -18,7 +18,8 @@ data class ChatCompletionRequest(
 @Serializable
 data class RequestMessage(
     val role: String,
-    val content: String,
+    // 兼容纯文本(JsonPrimitive)与多模态(JsonArray)两种 content 形态
+    val content: JsonElement,
 )
 
 /** 流式分块。 */
@@ -41,6 +42,9 @@ data class Choice(
 data class Delta(
     val role: String? = null,
     val content: String? = null,
+    @SerialName("reasoning_content") val reasoningContent: String? = null,
+    val reasoning: String? = null,
+    val thinking: String? = null,
 )
 
 @Serializable

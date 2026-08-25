@@ -27,6 +27,10 @@ data class AppColorScheme(
     val onUserBubble: Color,
     val aiBubble: Color,
     val onAiBubble: Color,
+    val codeKeyword: Color,
+    val codeString: Color,
+    val codeComment: Color,
+    val codeNumber: Color,
 )
 
 object AppLightColors {
@@ -50,6 +54,10 @@ object AppLightColors {
         onUserBubble = OnLightPrimary,
         aiBubble = LightSurfaceVariant,
         onAiBubble = OnLightSurfaceVariant,
+        codeKeyword = CodeKwL,
+        codeString = CodeStrL,
+        codeComment = CodeCmtL,
+        codeNumber = CodeNumL,
     )
 }
 
@@ -74,6 +82,10 @@ object AppDarkColors {
         onUserBubble = OnDarkPrimary,
         aiBubble = DarkSurfaceVariant,
         onAiBubble = OnDarkSurfaceVariant,
+        codeKeyword = CodeKwD,
+        codeString = CodeStrD,
+        codeComment = CodeCmtD,
+        codeNumber = CodeNumD,
     )
 }
 

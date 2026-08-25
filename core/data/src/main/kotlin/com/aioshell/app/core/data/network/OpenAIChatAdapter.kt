@@ -5,6 +5,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -50,10 +52,17 @@ class OpenAIChatAdapter(
     }
 
     /**
-     * 流式对话，逐块 emit 增量文本。
+     * 流式对话，逐块 emit 增量文本（仅正文）。
      * 出错时异常将被映射为面向用户的 [ApiException]。
      */
-    fun streamChat(config: ChatConfig, messages: List<RequestMessage>): Flow<String> = callbackFlow {
+    fun streamChat(config: ChatConfig, messages: List<RequestMessage>): Flow<String> =
+        streamChatEvents(config, messages).filterIsInstance<ChatStreamEvent.ContentDelta>().map { it.text }
+
+/**
+     * 流式对话（含思考内容分流）。逐块 emit [ChatStreamEvent]。
+     * 出错时异常将被映射为面向用户的 [ApiException]。
+     */
+    fun streamChatEvents(config: ChatConfig, messages: List<RequestMessage>): Flow<ChatStreamEvent> = callbackFlow {
         val request = Request.Builder()
             .url(buildEndpoint(config.baseUrl))
             .post(buildRequestBody(config, messages).toRequestBody(JSON_MEDIA))
@@ -62,11 +71,10 @@ class OpenAIChatAdapter(
             .build()
 
         val call = okHttpClient.newCall(request)
-
-        // 保存 ProducerScope 引用，在 IO 线程读流并推送
         val producer = this
 
         val job = launch(Dispatchers.IO) {
+            val reasoningStart = System.currentTimeMillis()
             try {
                 call.execute().use { response ->
                     if (!response.isSuccessful) {
@@ -83,9 +91,15 @@ class OpenAIChatAdapter(
                         val data = trimmed.substring(5).trim()
                         if (data.isBlank()) continue
                         if (data == "[DONE]") break
-                        val delta = parseDelta(data) ?: continue
-                        if (!producer.isClosedForSend) producer.trySend(delta)
+                        val event = parseDelta(data) ?: continue
+                        if (producer.isClosedForSend) continue
+                        when (event) {
+                            is ChatStreamEvent.ContentDelta -> producer.trySend(event)
+                            is ChatStreamEvent.ReasoningDelta -> producer.trySend(event)
+                            is ChatStreamEvent.Done -> { producer.trySend(event); break }
+                        }
                     }
+                    producer.trySend(ChatStreamEvent.Done(System.currentTimeMillis() - reasoningStart))
                     producer.close()
                 }
             } catch (e: Exception) {
@@ -95,12 +109,19 @@ class OpenAIChatAdapter(
         awaitClose { job.cancel(); call.cancel() }
     }
 
-    /** 解析单个 SSE data 块，提取增量文本；块非法或为错误时返回 null（错误抛出异常）。 */
-    private fun parseDelta(data: String): String? {
+    /** 解析单个 SSE data 块，分流 reasoning / content；块非法或为错误时返回 null（错误抛出异常）。 */
+    private fun parseDelta(data: String): ChatStreamEvent? {
         return try {
             val chunk = json.decodeFromString<ChatCompletionChunk>(data)
             chunk.error?.let { err -> throw ErrorMapper.fromApiError(err) }
-            chunk.choices?.firstOrNull()?.delta?.content
+            val delta = chunk.choices?.firstOrNull()?.delta
+            delta?.content?.takeIf { it.isNotEmpty() }?.let { return ChatStreamEvent.ContentDelta(it) }
+            val reasoning = delta?.let {
+                it.reasoningContent ?: it.reasoning ?: it.thinking
+            }?.takeIf { it.isNotEmpty() }
+            reasoning?.let { return ChatStreamEvent.ReasoningDelta(it) }
+            val finish = chunk.choices?.firstOrNull()?.finishReason
+            if (!finish.isNullOrEmpty()) ChatStreamEvent.Done(0L) else null
         } catch (e: ApiException) {
             throw e
         } catch (e: Exception) {
@@ -108,14 +129,10 @@ class OpenAIChatAdapter(
             null
         }
     }
-
-    /**
-     * 连接测试：非流式发起一次最小请求，校验配置可用性。
-     */
     suspend fun testConnection(config: ChatConfig): Boolean {
         val body = ChatCompletionRequest(
             model = config.model,
-            messages = listOf(RequestMessage("user", "ping")),
+            messages = listOf(RequestMessage("user", kotlinx.serialization.json.JsonPrimitive("ping"))),
             temperature = config.temperature,
             maxTokens = config.maxTokens,
             topP = config.topP,

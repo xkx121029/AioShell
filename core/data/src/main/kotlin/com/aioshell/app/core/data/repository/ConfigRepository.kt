@@ -32,12 +32,14 @@ class ConfigRepository @Inject constructor(
         return ChatConfig(
             id = id, name = name, baseUrl = baseUrl, apiKey = key, model = model,
             temperature = temperature, maxTokens = maxTokens, topP = topP, isDefault = isDefault,
+            reasoningEnabled = reasoningEnabled,
         )
     }
 
     private fun ChatConfig.toPersisted(): PersistedConfig = PersistedConfig(
         id = id, name = name, baseUrl = baseUrl, apiKeyCipher = crypto.encrypt(apiKey),
         model = model, temperature = temperature, maxTokens = maxTokens, topP = topP, isDefault = isDefault,
+        reasoningEnabled = reasoningEnabled,
     )
 
     /** 观察全部档案（含解密后的 API Key）。 */
@@ -80,4 +82,15 @@ class ConfigRepository @Inject constructor(
     }
 
     suspend fun setActive(id: String) = store.setActiveId(id)
+
+    /** 更新某档案的思考模式开关（模型级，多会话共用同一档案同步生效）。 */
+    suspend fun setReasoningEnabled(id: String, enabled: Boolean) {
+        val list = store.profilesFlow.first().toMutableList()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx >= 0) {
+            val p = list[idx]
+            list[idx] = p.copy(reasoningEnabled = enabled)
+            store.saveProfiles(list)
+        }
+    }
 }

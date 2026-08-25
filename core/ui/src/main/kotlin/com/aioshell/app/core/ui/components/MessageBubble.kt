@@ -5,6 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +60,13 @@ fun MessageBubble(
         isUser -> c.onUserBubble
         else -> c.onAiBubble
     }
+    val bubbleShape = RoundedCornerShape(
+        topStart = AppRadius.lg,
+        topEnd = AppRadius.lg,
+        bottomStart = if (isUser) AppRadius.lg else AppRadius.sm,
+        bottomEnd = if (isUser) AppRadius.sm else AppRadius.lg,
+    )
+    val borderColor = if (isUser) c.primary.copy(alpha = 0.4f) else c.outline.copy(alpha = 0.35f)
 
     var visible by remember { mutableStateOf(!animate) }
     LaunchedEffect(Unit) { if (animate) visible = true }
@@ -74,15 +82,8 @@ fun MessageBubble(
             Column(
                 Modifier
                     .widthIn(max = 320.dp)
-                    .background(
-                        color = bubbleColor,
-                        shape = RoundedCornerShape(
-                            topStart = AppRadius.lg,
-                            topEnd = AppRadius.lg,
-                            bottomStart = if (isUser) AppRadius.lg else AppRadius.sm,
-                            bottomEnd = if (isUser) AppRadius.sm else AppRadius.lg,
-                        ),
-                    )
+                    .background(color = bubbleColor, shape = bubbleShape)
+                    .border(1.dp, borderColor, bubbleShape)
                     .padding(horizontal = AppSpacing.lg, vertical = AppSpacing.md),
             ) {
                 if (isUser) {

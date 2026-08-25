@@ -29,7 +29,7 @@ class SessionRepository @Inject constructor(private val db: AppDatabase) {
     val sessions: Flow<List<SessionSummary>> = dao.observeAll().map { list ->
         list.map { s ->
             val preview = messageDao.getInSession(s.id).lastOrNull()?.content.orEmpty()
-            SessionSummary(s.id, s.title, s.configId, s.createdAt, s.updatedAt, preview)
+            SessionSummary(s.id, s.title, s.configId, s.createdAt, s.updatedAt, summarizePreview(preview))
         }
     }
 
@@ -38,6 +38,13 @@ class SessionRepository @Inject constructor(private val db: AppDatabase) {
         val id = UUID.randomUUID().toString()
         dao.insert(SessionEntity(id, title, configId, now, now))
         return id
+    }
+
+    /** 摘要统一规则：代码降级为 [代码]，超长截断。 */
+    private fun summarizePreview(content: String): String = when {
+        content.contains("```") -> "[代码]"
+        content.length > 40 -> content.take(40) + "…"
+        else -> content
     }
 
     suspend fun getById(id: String): SessionEntity? = dao.getById(id)

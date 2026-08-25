@@ -25,6 +25,9 @@ data class ConfigFormUi(
     val maxTokens: String = "2048",
     val topP: String = "1.0",
     val loaded: Boolean = false,
+    val baseUrlError: String? = null,
+    val modelError: String? = null,
+    val apiKeyError: String? = null,
 )
 
 data class ConfigEditState(
@@ -74,9 +77,9 @@ class ConfigEditViewModel @Inject constructor(
         val f = _state.value.form
         val updated = when (field) {
             "name" -> f.copy(name = value)
-            "baseUrl" -> f.copy(baseUrl = value)
-            "apiKey" -> f.copy(apiKey = value)
-            "model" -> f.copy(model = value)
+            "baseUrl" -> f.copy(baseUrl = value, baseUrlError = null)
+            "apiKey" -> f.copy(apiKey = value, apiKeyError = null)
+            "model" -> f.copy(model = value, modelError = null)
             "temperature" -> f.copy(temperature = value)
             "maxTokens" -> f.copy(maxTokens = value)
             "topP" -> f.copy(topP = value)
@@ -85,23 +88,42 @@ class ConfigEditViewModel @Inject constructor(
         _state.value = _state.value.copy(form = updated)
     }
 
-    private fun validatedConfig(): ChatConfig? {
+    /** 集中表单校验：字段错误写入状态，返回是否通过。 */
+    fun validate(): Boolean {
         val f = _state.value.form
-        return if (f.baseUrl.isBlank() || f.model.isBlank()) {
-            _state.value = _state.value.copy(testMessage = "请填写 Base URL 与模型名称", testSuccess = false)
-            null
-        } else {
-            ChatConfig(
-                id = f.id,
-                name = f.name.ifBlank { f.model },
-                baseUrl = f.baseUrl,
-                apiKey = f.apiKey,
-                model = f.model,
-                temperature = f.temperature.toFloatOrNull() ?: 0.7f,
-                maxTokens = f.maxTokens.toIntOrNull() ?: 2048,
-                topP = f.topP.toFloatOrNull() ?: 1.0f,
+        val baseErr = when {
+            f.baseUrl.isBlank() -> "接口地址不能为空"
+            !f.baseUrl.trim().startsWith("http") -> "接口地址需以 http/https 开头"
+            else -> null
+        }
+        val modelErr = if (f.model.isBlank()) "模型名称不能为空" else null
+        // apiKey 可选（部分本地服务无需密钥）
+        val valid = baseErr == null && modelErr == null
+        _state.value = _state.value.copy(
+            form = f.copy(baseUrlError = baseErr, modelError = modelErr),
+        )
+        if (!valid) {
+            _state.value = _state.value.copy(
+                testMessage = listOfNotNull(baseErr, modelErr).first(),
+                testSuccess = false,
             )
         }
+        return valid
+    }
+
+    private fun validatedConfig(): ChatConfig? {
+        if (!validate()) return null
+        val f = _state.value.form
+        return ChatConfig(
+            id = f.id,
+            name = f.name.ifBlank { f.model },
+            baseUrl = f.baseUrl.trim(),
+            apiKey = f.apiKey,
+            model = f.model.trim(),
+            temperature = f.temperature.toFloatOrNull()?.coerceIn(0f, 2f) ?: 0.7f,
+            maxTokens = f.maxTokens.toIntOrNull()?.coerceIn(1, 8192) ?: 2048,
+            topP = f.topP.toFloatOrNull()?.coerceIn(0f, 1f) ?: 1.0f,
+        )
     }
 
     fun testConnection() {

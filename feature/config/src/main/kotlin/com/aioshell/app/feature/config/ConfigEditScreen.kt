@@ -79,6 +79,7 @@ fun ConfigEditScreen(
                     label = "Base URL",
                     placeholder = "https://your-api.example.com/v1",
                     supportingText = "兼容 OpenAI 协议的接口根地址",
+                    errorText = f.baseUrlError,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 AppTextField(
@@ -87,6 +88,7 @@ fun ConfigEditScreen(
                     label = "模型名称",
                     placeholder = "gpt-4o-mini",
                     supportingText = "模型名需与接口服务端一致",
+                    errorText = f.modelError,
                     modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                 )
             }

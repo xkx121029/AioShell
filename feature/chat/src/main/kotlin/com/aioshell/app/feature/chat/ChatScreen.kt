@@ -1,9 +1,14 @@
 package com.aioshell.app.feature.chat
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -22,11 +28,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -40,15 +48,24 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -66,6 +83,7 @@ import com.aioshell.app.core.ui.theme.AppSpacing
 import com.aioshell.app.core.ui.theme.AppTheme
 import com.aioshell.app.core.ui.util.copyTextToClipboard
 import com.aioshell.app.core.ui.components.ErrorState
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -76,13 +94,31 @@ fun ChatScreen(
 ) {
     val ui by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var input by remember { mutableStateOf("") }
+    val haptic = LocalHapticFeedback.current
+    var input by rememberSaveable { mutableStateOf("") }
     var actionTarget by remember { mutableStateOf<ChatMessage?>(null) }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
+    // 是否停留在底部（用于智能跟随与"回到底部"按钮）
+    val isAtBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount > 0 && lastVisible >= info.totalItemsCount - 1
+        }
+    }
+
+    // 智能跟随：仅在用户停留底部时自动滚动，上翻历史不被强制拉回
     LaunchedEffect(ui.messages.size, ui.messages.lastOrNull()?.content?.length) {
+        if (ui.isStreaming && !isAtBottom) return@LaunchedEffect
         val count = ui.messages.size
-        if (count > 0) listState.animateScrollToItem(count - 1)
+        if (count > 0 && isAtBottom) listState.animateScrollToItem(count - 1)
+    }
+
+    fun scrollToBottom() {
+        val count = ui.messages.size
+        if (count > 0) scope.launch { listState.animateScrollToItem(count - 1) }
     }
 
     Scaffold(
@@ -117,24 +153,53 @@ fun ChatScreen(
                     title = "开始一段新对话",
                     modifier = Modifier.weight(1f),
                 )
-                else -> LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                ) {
-                    items(ui.messages, key = { it.id }) { msg ->
-                        MessageBubble(
-                            content = msg.content,
-                            isUser = msg.role == MessageRole.USER,
-                            isError = msg.role == MessageRole.ERROR,
-                            isStreaming = msg.role == MessageRole.ASSISTANT && msg.status == MessageStatus.SENDING,
-                            modifier = Modifier.combinedClickable(
-                                onClick = {},
-                                onLongClick = {
-                                    if (msg.role == MessageRole.ASSISTANT || msg.role == MessageRole.ERROR) actionTarget = msg
+                else -> Box(Modifier.weight(1f).fillMaxWidth()) {
+                    // 流式生成动态状态：告知读屏用户
+                    if (ui.isStreaming) {
+                        Text(
+                            "正在生成回复…",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AppTheme.colors.secondary,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 4.dp)
+                                .semantics {
+                                    liveRegion = LiveRegionMode.Polite
+                                    this.contentDescription = "AI 正在生成回复"
                                 },
-                            ),
                         )
+                    }
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        items(ui.messages, key = { it.id }) { msg ->
+                            MessageBubble(
+                                content = msg.content,
+                                isUser = msg.role == MessageRole.USER,
+                                isError = msg.role == MessageRole.ERROR,
+                                isStreaming = msg.role == MessageRole.ASSISTANT && msg.status == MessageStatus.SENDING,
+                                modifier = Modifier.combinedClickable(
+                                    onClick = {},
+                                    onLongClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        if (msg.role == MessageRole.ASSISTANT || msg.role == MessageRole.ERROR) actionTarget = msg
+                                    },
+                                ),
+                            )
+                        }
+                    }
+                    // 上翻历史且出现新消息时显示"回到底部"
+                    if (!isAtBottom && ui.messages.isNotEmpty() && !ui.isStreaming) {
+                        FloatingActionButton(
+                            onClick = ::scrollToBottom,
+                            containerColor = AppTheme.colors.surfaceVariant,
+                            contentColor = AppTheme.colors.primary,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 12.dp).size(44.dp),
+                        ) {
+                            Icon(Icons.Filled.ArrowDownward, contentDescription = "回到底部")
+                        }
                     }
                 }
             }
@@ -146,7 +211,11 @@ fun ChatScreen(
                 onChange = { input = it },
                 isStreaming = ui.isStreaming,
                 canSend = ui.hasConfig,
-                onSend = { viewModel.send(input); input = "" },
+                onSend = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    viewModel.send(input)
+                    input = ""
+                },
                 onStop = viewModel::stopStreaming,
             )
         }
@@ -156,6 +225,7 @@ fun ChatScreen(
         MessageActionMenu(
             message = msg,
             onCopy = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 context.copyTextToClipboard("消息", msg.content)
                 actionTarget = null
             },
@@ -204,7 +274,7 @@ private fun InputBar(
             OutlinedTextField(
                 value = value,
                 onValueChange = onChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 120.dp),
                 placeholder = { Text("输入消息…") },
                 maxLines = 5,
                 shape = MaterialTheme.shapes.large,

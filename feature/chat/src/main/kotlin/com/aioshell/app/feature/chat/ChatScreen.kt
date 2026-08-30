@@ -46,6 +46,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -120,6 +121,7 @@ import com.aioshell.app.core.ui.components.ButtonStyle
 import com.aioshell.app.core.ui.components.EmptyState
 import com.aioshell.app.core.ui.components.MessageBubble
 import com.aioshell.app.core.ui.theme.AppColorScheme
+import com.aioshell.app.core.ui.theme.AppRadius
 import com.aioshell.app.core.ui.theme.AppSpacing
 import com.aioshell.app.core.ui.theme.AppTheme
 import com.aioshell.app.core.ui.util.copyTextToClipboard
@@ -424,54 +426,122 @@ private fun InputBar(
 ) {
     val c = AppTheme.colors
     Surface(
-        color = c.surfaceVariant,
-        shape = MaterialTheme.shapes.large,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        color = c.surfaceVariant.copy(alpha = 0.95f),
+        shape = RoundedCornerShape(topStart = AppRadius.xl, topEnd = AppRadius.xl),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.sm, vertical = AppSpacing.sm),
+        shadowElevation = 8.dp,
     ) {
-        Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)) {
-            IconButton(onClick = onVoiceToggle) {
-                Icon(
-                    Icons.Filled.Mic,
-                    contentDescription = if (isListening) "停止语音输入" else "语音输入",
-                    tint = if (isListening) c.error else c.secondary,
-                )
-            }
-            IconButton(onClick = onPickImage) {
-                Icon(Icons.Filled.AddPhotoAlternate, "添加图片", tint = c.secondary)
-            }
-            OutlinedTextField(
-                value = value,
-                onValueChange = onChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp, max = 120.dp)
-                    // 长按输入框 → 语音输入（不拦截单击聚焦/打字）
-                    .pointerInput(onVoiceToggle) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            val longPress = awaitLongPressOrCancellation(down.id)
-                            if (longPress != null) onVoiceToggle()
-                        }
+        Column {
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.padding(horizontal = AppSpacing.md, vertical = AppSpacing.sm),
+            ) {
+                // 语音按钮 - 圆形图标
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(if (isListening) c.error.copy(alpha = 0.15f) else c.primary.copy(alpha = 0.1f))
+                        .clickable(enabled = !isStreaming) { onVoiceToggle() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Mic,
+                        contentDescription = if (isListening) "停止语音输入" else "语音输入",
+                        tint = if (isListening) c.error else c.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+
+                Spacer(Modifier.width(AppSpacing.sm))
+
+                // 图片按钮
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(c.secondary.copy(alpha = 0.1f))
+                        .clickable { onPickImage() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.AddPhotoAlternate,
+                        contentDescription = "添加图片",
+                        tint = c.secondary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+
+                Spacer(Modifier.width(AppSpacing.md))
+
+                // 输入框
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = onChange,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 44.dp, max = 120.dp)
+                        .pointerInput(onVoiceToggle) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val longPress = awaitLongPressOrCancellation(down.id)
+                                if (longPress != null) onVoiceToggle()
+                            }
+                        },
+                    placeholder = {
+                        Text(
+                            if (isListening) "正在聆听…" else "输入消息…",
+                            color = c.onSurfaceVariant,
+                        )
                     },
-                placeholder = { Text(if (isListening) "正在聆听…" else "输入消息…") },
-                maxLines = 5,
-                shape = MaterialTheme.shapes.large,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                ),
-            )
-            Spacer(Modifier.size(6.dp))
-            if (isStreaming) {
-                IconButton(onClick = onStop) { Icon(Icons.Filled.Stop, "停止", tint = c.error) }
-            } else {
-                androidx.compose.material3.Button(
-                    onClick = onSend,
-                    enabled = canSend && (value.isNotBlank() || true),
-                    modifier = Modifier.padding(bottom = 4.dp),
-                    shape = RoundedCornerShape(50),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                ) { Icon(Icons.Filled.Send, contentDescription = "发送") }
+                    maxLines = 5,
+                    shape = RoundedCornerShape(AppRadius.md),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = c.surface.copy(alpha = 0.5f),
+                        unfocusedContainerColor = c.surface.copy(alpha = 0.3f),
+                        focusedBorderColor = c.primary,
+                        unfocusedBorderColor = Color.Transparent,
+                        cursorColor = c.primary,
+                    ),
+                )
+
+                Spacer(Modifier.width(AppSpacing.sm))
+
+                // 发送/停止按钮
+                if (isStreaming) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(c.error.copy(alpha = 0.15f))
+                            .clickable { onStop() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Filled.Stop,
+                            contentDescription = "停止",
+                            tint = c.error,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(if (value.isNotBlank()) c.primary else c.secondary.copy(alpha = 0.3f))
+                            .shadow(4.dp, CircleShape)
+                            .clickable(enabled = canSend) { onSend() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Filled.Send,
+                            contentDescription = "发送",
+                            tint = if (value.isNotBlank()) c.onPrimary else c.onSurfaceVariant,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                }
             }
         }
     }

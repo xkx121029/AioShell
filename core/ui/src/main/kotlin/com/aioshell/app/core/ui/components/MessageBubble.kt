@@ -6,10 +6,10 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aioshell.app.core.ui.animation.rememberBlinkingAlpha
@@ -52,13 +53,13 @@ fun MessageBubble(
 ) {
     val c = AppTheme.colors
     val bubbleColor = when {
-        isUser -> c.userBubble
-        else -> c.aiBubble
+        isUser -> c.primary.copy(alpha = 0.15f)
+        else -> c.surfaceVariant
     }
     val textColor = when {
         isError -> c.error
-        isUser -> c.onUserBubble
-        else -> c.onAiBubble
+        isUser -> c.onSurface
+        else -> c.onSurface
     }
     val bubbleShape = RoundedCornerShape(
         topStart = AppRadius.lg,
@@ -66,7 +67,8 @@ fun MessageBubble(
         bottomStart = if (isUser) AppRadius.lg else AppRadius.sm,
         bottomEnd = if (isUser) AppRadius.sm else AppRadius.lg,
     )
-    val borderColor = if (isUser) c.primary.copy(alpha = 0.4f) else c.outline.copy(alpha = 0.35f)
+    val borderColor = if (isUser) c.primary.copy(alpha = 0.3f) else c.outline.copy(alpha = 0.2f)
+    val elevation = if (isUser) 2.dp else 1.dp
 
     var visible by remember { mutableStateOf(!animate) }
     LaunchedEffect(Unit) { if (animate) visible = true }
@@ -77,11 +79,12 @@ fun MessageBubble(
     ) {
         Row(
             modifier = modifier.fillMaxWidth().padding(vertical = AppSpacing.sm),
-            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
         ) {
+            if (isUser) Spacer(Modifier.weight(1f))
             Column(
                 Modifier
                     .widthIn(max = 320.dp)
+                    .shadow(elevation = elevation, shape = bubbleShape)
                     .background(color = bubbleColor, shape = bubbleShape)
                     .border(1.dp, borderColor, bubbleShape)
                     .padding(horizontal = AppSpacing.lg, vertical = AppSpacing.md),
@@ -91,7 +94,7 @@ fun MessageBubble(
                         content,
                         style = MaterialTheme.typography.bodyLarge,
                         color = textColor,
-                        fontWeight = FontWeight.Normal,
+                        fontWeight = FontWeight.Medium,
                     )
                 } else {
                     MarkdownText(content, textColor = textColor)
@@ -103,6 +106,7 @@ fun MessageBubble(
                     }
                 }
             }
+            if (!isUser) Spacer(Modifier.weight(1f))
         }
     }
 }

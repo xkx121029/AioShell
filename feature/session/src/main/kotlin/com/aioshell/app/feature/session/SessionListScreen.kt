@@ -1,6 +1,7 @@
 package com.aioshell.app.feature.session
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,9 +10,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -32,7 +35,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -42,7 +44,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -54,8 +58,12 @@ import com.aioshell.app.core.ui.components.AppButton
 import com.aioshell.app.core.ui.components.AppCard
 import com.aioshell.app.core.ui.components.AppCardContent
 import com.aioshell.app.core.ui.components.AppDialog
+import com.aioshell.app.core.ui.components.ButtonStyle
 import com.aioshell.app.core.ui.components.EmptyState
 import com.aioshell.app.core.ui.components.LoadingState
+import com.aioshell.app.core.ui.theme.AppRadius
+import com.aioshell.app.core.ui.theme.AppSpacing
+import com.aioshell.app.core.ui.theme.AppTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,46 +77,69 @@ fun SessionListScreen(
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     var renameTarget by remember { mutableStateOf<SessionUiItem?>(null) }
     var deleteTarget by remember { mutableStateOf<SessionUiItem?>(null) }
+    val c = AppTheme.colors
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = c.background,
         topBar = {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("AioShell", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "AioShell",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = c.onBackground,
+                        )
                         Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = MaterialTheme.shapes.extraSmall,
+                            color = c.primary.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(AppRadius.sm),
                             modifier = Modifier.padding(start = 8.dp),
                         ) {
                             Text(
                                 "本地 · 私有",
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = c.primary,
+                                fontWeight = FontWeight.Medium,
                             )
                         }
                     }
                 },
                 actions = {
                     IconButton(onClick = viewModel::cycleTheme) {
-                        Icon(themeIcon(ui.themeMode), contentDescription = ui.themeMode.label)
+                        Icon(themeIcon(ui.themeMode), contentDescription = ui.themeMode.label, tint = c.onSurface)
                     }
-                    IconButton(onClick = onSelectIcon) { Icon(Icons.Filled.Palette, contentDescription = "应用图标") }
-                    IconButton(onClick = onSelectConfig) { Icon(Icons.Filled.Settings, contentDescription = "接口配置") }
+                    IconButton(onClick = onSelectIcon) {
+                        Icon(Icons.Filled.Palette, contentDescription = "应用图标", tint = c.onSurface)
+                    }
+                    IconButton(onClick = onSelectConfig) {
+                        Icon(Icons.Filled.Settings, contentDescription = "接口配置", tint = c.onSurface)
+                    }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = c.background),
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    val cfgId = ui.activeConfigId
-                    if (cfgId != null) viewModel.createAndGetId(cfgId, onOpenSession)
-                    else onGoConfig()
-                },
-            ) { Icon(Icons.Filled.Add, contentDescription = "新建会话") }
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(c.primary)
+                    .clickable {
+                        val cfgId = ui.activeConfigId
+                        if (cfgId != null) viewModel.createAndGetId(cfgId, onOpenSession)
+                        else onGoConfig()
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = "新建会话",
+                    tint = c.onPrimary,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
         },
     ) { inner ->
         when {
@@ -131,8 +162,8 @@ fun SessionListScreen(
             }
             else -> LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(inner),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(horizontal = AppSpacing.md, vertical = AppSpacing.md),
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
             ) {
                 items(ui.sessions, key = { it.id }) { item ->
                     SessionListItem(
@@ -179,7 +210,7 @@ private fun SessionListItem(
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val c = MaterialTheme.colorScheme
+    val c = AppTheme.colors
     AppCard(onClick = onClick) {
         AppCardContent {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -237,7 +268,7 @@ private fun RenameDialog(
                     shape = MaterialTheme.shapes.medium,
                 )
                 Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.End) {
-                    AppButton(text = "取消", onClick = onDismiss, style = com.aioshell.app.core.ui.components.ButtonStyle.TEXT)
+                    AppButton(text = "取消", onClick = onDismiss, style = ButtonStyle.TEXT)
                     AppButton(text = "确定", onClick = { onConfirm(text.trim().ifBlank { "未命名" }) }, modifier = Modifier.padding(start = 8.dp))
                 }
             }

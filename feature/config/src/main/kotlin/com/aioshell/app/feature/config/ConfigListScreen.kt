@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.Card
@@ -51,6 +52,7 @@ fun ConfigListScreen(
     onBack: () -> Unit,
     onAdd: () -> Unit,
     onEdit: (String) -> Unit,
+    onMiscAi: () -> Unit,
     viewModel: ConfigListViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -63,6 +65,11 @@ fun ConfigListScreen(
                 title = { Text("接口配置", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回") }
+                },
+                actions = {
+                    IconButton(onClick = onMiscAi) {
+                        Icon(Icons.Filled.Settings, contentDescription = "杂项 AI")
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,

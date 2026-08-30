@@ -11,11 +11,13 @@ import com.aioshell.app.core.data.audio.VoiceModelState
 import com.aioshell.app.core.data.image.ImageProcessor
 import com.aioshell.app.core.data.model.ChatConfig
 import com.aioshell.app.core.data.model.ChatMessage
+import com.aioshell.app.core.data.model.MiscAiMeta
 import com.aioshell.app.core.data.network.ApiException
 import com.aioshell.app.core.data.network.ChatStreamEvent
 import com.aioshell.app.core.data.repository.ChatRepository
 import com.aioshell.app.core.data.repository.ConfigRepository
 import com.aioshell.app.core.data.repository.MessageRepository
+import com.aioshell.app.core.data.repository.MiscAiRepository
 import com.aioshell.app.core.data.repository.SessionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -55,6 +57,7 @@ class ChatViewModel @Inject constructor(
     private val sessionRepo: SessionRepository,
     private val configRepo: ConfigRepository,
     private val chatRepo: ChatRepository,
+    private val miscAiRepo: MiscAiRepository,
     private val modelManager: ModelManager,
     @ApplicationContext private val appContext: Context,
     savedStateHandle: SavedStateHandle,
@@ -128,21 +131,57 @@ class ChatViewModel @Inject constructor(
         streamingJob = viewModelScope.launch {
             _state.value = _state.value.copy(isStreaming = true)
             try {
+                // 是否为会话首条消息（新建对话的第一条用户消息）
+                val isFirst = messageRepo.getInSession(sessionId).isEmpty()
                 val imagePaths = images.map { it.path }
                 _state.value = _state.value.copy(pendingImages = emptyList())
                 messageRepo.addUserMessage(sessionId, raw, attachmentPaths = imagePaths)
                 sessionRepo.touch(sessionId)
                 val assistant = messageRepo.addAssistantMessage(sessionId)
+
+                // 首条消息：用"杂项 AI"命名对话 + 分析意图，并把身份/风格建议注入主模型
+                val systemPrompt = if (isFirst) {
+                    val meta = chatRepo.analyze(pickMiscAiConfig(cfg), raw, pickMiscAiPrompt())
+                    if (meta.title.isNotBlank()) {
+                        sessionRepo.rename(sessionId, meta.title)
+                        _state.value = _state.value.copy(title = meta.title)
+                    }
+                    buildSystemPrompt(meta)
+                } else null
+
                 val history = messageRepo.getInSession(sessionId).filterNot { it.id == assistant.id }
                 val imageBase64s = withContext(Dispatchers.IO) {
                     imagePaths.map { ImageProcessor.encodeToBase64(File(it)) }
                 }
-                streamAssistant(cfg, assistant, history, imageBase64s)
+                streamAssistant(cfg, assistant, history, imageBase64s, systemPrompt)
                 sessionRepo.touch(sessionId)
             } finally {
                 _state.value = _state.value.copy(isStreaming = false)
             }
         }
+    }
+
+    /** 选择用于"杂项 AI"的模型档案：优先用户配置的独立档案，否则回退当前聊天模型。 */
+    private suspend fun pickMiscAiConfig(fallback: ChatConfig): ChatConfig {
+        val misc = miscAiRepo.get()
+        val valid = misc.enabled && misc.baseUrl.isNotBlank() && misc.model.isNotBlank()
+        if (!valid) return fallback
+        return ChatConfig(
+            id = "misc_ai", name = "杂项AI", baseUrl = misc.baseUrl,
+            apiKey = misc.apiKey, model = misc.model, temperature = 0.2f,
+        )
+    }
+
+    private suspend fun pickMiscAiPrompt(): String = if (miscAiRepo.get().enabled) miscAiRepo.get().prompt else ""
+
+    /** 把杂项 AI 返回的元数据组织成主模型第一条请求的 system 握手信息。 */
+    private fun buildSystemPrompt(meta: MiscAiMeta): String? {
+        val parts = buildList {
+            if (meta.identity.isNotBlank()) add("你在此对话中的身份：${meta.identity}。")
+            if (meta.style.isNotBlank()) add("你的回答风格：${meta.style}。")
+            if (meta.intent.isNotBlank()) add("用户本次对话的意图：${meta.intent}。")
+        }
+        return parts.joinToString("\n").takeIf { it.isNotBlank() }
     }
 
     /** 流式生成：思考内容与正文内容分流写入。 */
@@ -151,11 +190,12 @@ class ChatViewModel @Inject constructor(
         assistant: ChatMessage,
         history: List<ChatMessage>,
         imageBase64s: List<String>,
+        systemPrompt: String? = null,
     ) {
         var acc = ""
         var reasoningAcc = ""
         runCatching {
-            chatRepo.streamChatWithReasoning(cfg, history, imageBase64s).collect { event ->
+            chatRepo.streamChatWithReasoning(cfg, history, imageBase64s, systemPrompt).collect { event ->
                 when (event) {
                     is ChatStreamEvent.ReasoningDelta -> {
                         reasoningAcc += event.text

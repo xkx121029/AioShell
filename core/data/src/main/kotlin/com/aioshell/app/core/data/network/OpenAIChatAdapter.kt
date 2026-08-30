@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
@@ -129,6 +130,44 @@ class OpenAIChatAdapter(
             null
         }
     }
+    /**
+     * 非流式补全：一次性返回正文文本。
+     * 供"杂项 AI"（命名/意图分析）等需要完整 JSON 结果的场景使用。
+     * 出错时抛出映射好的 [ApiException]。
+     */
+    suspend fun complete(config: ChatConfig, messages: List<RequestMessage>): String {
+        val body = ChatCompletionRequest(
+            model = config.model,
+            messages = messages,
+            temperature = config.temperature,
+            maxTokens = config.maxTokens,
+            topP = config.topP,
+            stream = false,
+        )
+        val request = Request.Builder()
+            .url(buildEndpoint(config.baseUrl))
+            .post(json.encodeToString(body).toRequestBody(JSON_MEDIA))
+            .header("Authorization", "Bearer ${config.apiKey}")
+            .build()
+        return withContext(Dispatchers.IO) {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errBody = response.body?.string().orEmpty()
+                    throw ErrorMapper.mapHttp(response.code, errBody)
+                }
+                val text = response.body?.string().orEmpty()
+                val resp = runCatching { json.decodeFromString<ChatCompletionResponse>(text) }
+                    .getOrElse {
+                        val env = runCatching { json.decodeFromString<ErrorEnvelope>(text) }.getOrNull()
+                        env?.error?.let { throw ErrorMapper.fromApiError(it) }
+                        throw ErrorMapper.mapHttp(response.code, text)
+                    }
+                resp.error?.let { throw ErrorMapper.fromApiError(it) }
+                resp.choices?.firstOrNull()?.message?.content ?: ""
+            }
+        }
+    }
+
     suspend fun testConnection(config: ChatConfig): Boolean {
         val body = ChatCompletionRequest(
             model = config.model,

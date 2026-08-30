@@ -9,6 +9,7 @@ import androidx.navigation.navArgument
 import com.aioshell.app.feature.chat.ChatScreen
 import com.aioshell.app.feature.config.ConfigEditScreen
 import com.aioshell.app.feature.config.ConfigListScreen
+import com.aioshell.app.feature.config.MiscAiScreen
 import com.aioshell.app.feature.session.SessionListScreen
 import com.aioshell.app.icon.IconPickerScreen
 
@@ -17,6 +18,7 @@ object Routes {
     const val CHAT = "chat/{sessionId}"
     const val CONFIGS = "configs"
     const val CONFIG_EDIT = "config/edit?configId={configId}"
+    const val MISC_AI = "config/misc"
     const val ICONS = "icons"
 
     fun chat(sessionId: String) = "chat/$sessionId"
@@ -52,7 +54,12 @@ fun AioAppNav() {
                 onBack = { navController.popBackStack() },
                 onAdd = { navController.navigate(Routes.configEdit(null)) },
                 onEdit = { navController.navigate(Routes.configEdit(it)) },
+                onMiscAi = { navController.navigate(Routes.MISC_AI) },
             )
+        }
+
+        composable(Routes.MISC_AI) {
+            MiscAiScreen(onBack = { navController.popBackStack() })
         }
 
         composable(

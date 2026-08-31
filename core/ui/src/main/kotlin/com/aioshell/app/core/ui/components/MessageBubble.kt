@@ -28,11 +28,13 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.aioshell.app.core.ui.animation.rememberBlinkingAlpha
 import com.aioshell.app.core.ui.markdown.MarkdownText
 import com.aioshell.app.core.ui.theme.AppRadius
 import com.aioshell.app.core.ui.theme.AppSpacing
 import com.aioshell.app.core.ui.theme.AppTheme
+import com.aioshell.app.core.ui.theme.LocalChatTextSettings
 
 /**
  * 统一消息气泡（渲染层不依赖数据模型，便于复用）。
@@ -52,6 +54,7 @@ fun MessageBubble(
     animate: Boolean = false,
 ) {
     val c = AppTheme.colors
+    val chatText = LocalChatTextSettings.current
     val bubbleColor = when {
         isUser -> c.primary.copy(alpha = 0.15f)
         else -> c.surfaceVariant
@@ -92,7 +95,10 @@ fun MessageBubble(
                 if (isUser) {
                     Text(
                         content,
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = chatText.fontSizeSp.sp,
+                            lineHeight = (MaterialTheme.typography.bodyLarge.lineHeight.value + chatText.lineSpacingSp).sp,
+                        ),
                         color = textColor,
                         fontWeight = FontWeight.Medium,
                     )

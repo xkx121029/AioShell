@@ -6,8 +6,12 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aioshell.app.core.data.audio.ModelManager
+import com.aioshell.app.core.data.audio.TtsManager
+import com.aioshell.app.core.data.audio.TtsState
 import com.aioshell.app.core.data.audio.VoskRecognizer
 import com.aioshell.app.core.data.audio.VoiceModelState
+import com.aioshell.app.core.data.export.ConversationExporter
+import com.aioshell.app.core.data.export.ExportFormat
 import com.aioshell.app.core.data.image.ImageProcessor
 import com.aioshell.app.core.data.model.ChatConfig
 import com.aioshell.app.core.data.model.ChatMessage
@@ -25,6 +29,7 @@ import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,6 +44,7 @@ data class UiImage(val id: String, val path: String)
 data class ChatUiState(
     val sessionId: String = "",
     val title: String = "对话",
+    val draft: String = "",
     val messages: List<ChatMessage> = emptyList(),
     val loading: Boolean = true,
     val hasConfig: Boolean = false,
@@ -49,6 +55,7 @@ data class ChatUiState(
     val isListening: Boolean = false,
     val speechText: String = "",
     val soundLevel: Float = 0f,
+    val highlightMessageId: String? = null,
 )
 
 @HiltViewModel
@@ -59,13 +66,19 @@ class ChatViewModel @Inject constructor(
     private val chatRepo: ChatRepository,
     private val miscAiRepo: MiscAiRepository,
     private val modelManager: ModelManager,
+    private val ttsManager: TtsManager,
+    private val exporter: ConversationExporter,
     @ApplicationContext private val appContext: Context,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val sessionId: String = checkNotNull(savedStateHandle["sessionId"])
+    private val highlightMessageId: String? =
+        savedStateHandle.get<String>("highlight")?.takeIf { it.isNotBlank() }
 
-    private val _state = MutableStateFlow(ChatUiState(sessionId = sessionId))
+    private val _state = MutableStateFlow(
+        ChatUiState(sessionId = sessionId, highlightMessageId = highlightMessageId)
+    )
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private val activeConfig: StateFlow<ChatConfig?> =
@@ -74,15 +87,19 @@ class ChatViewModel @Inject constructor(
 
     private var streamingJob: Job? = null
     private var voiceJob: Job? = null
+    private var draftJob: Job? = null
     private var speechAccumulated = ""
 
     /** 语音模型下载 / 加载状态（来自 [ModelManager]）。 */
     val voiceModelState: StateFlow<VoiceModelState> = modelManager.state
 
+    /** TTS 朗读状态（来自 [TtsManager]）。 */
+    val ttsState: StateFlow<TtsState> = ttsManager.state
+
     init {
         viewModelScope.launch {
             val session = sessionRepo.getById(sessionId)
-            session?.let { _state.value = _state.value.copy(title = it.title) }
+            session?.let { _state.value = _state.value.copy(title = it.title, draft = it.draft.orEmpty()) }
             messageRepo.observeInSession(sessionId).collectLatest { msgs ->
                 _state.value = _state.value.copy(messages = msgs, loading = false)
             }
@@ -142,12 +159,19 @@ class ChatViewModel @Inject constructor(
                 // 首条消息：用"杂项 AI"命名对话 + 分析意图，并把身份/风格建议注入主模型
                 val systemPrompt = if (isFirst) {
                     val meta = chatRepo.analyze(pickMiscAiConfig(cfg), raw, pickMiscAiPrompt())
-                    if (meta.title.isNotBlank()) {
-                        sessionRepo.rename(sessionId, meta.title)
-                        _state.value = _state.value.copy(title = meta.title)
+                    val finalTitle = meta.title.ifBlank { localTitle(raw) }
+                    if (finalTitle.isNotBlank() && finalTitle != "新对话") {
+                        sessionRepo.rename(sessionId, finalTitle)
+                        _state.value = _state.value.copy(title = finalTitle)
                     }
                     buildSystemPrompt(meta)
                 } else null
+
+                // 发送后清空输入草稿
+                if (_state.value.draft.isNotBlank()) {
+                    sessionRepo.saveDraft(sessionId, null)
+                    _state.value = _state.value.copy(draft = "")
+                }
 
                 val history = messageRepo.getInSession(sessionId).filterNot { it.id == assistant.id }
                 val imageBase64s = withContext(Dispatchers.IO) {
@@ -260,6 +284,46 @@ class ChatViewModel @Inject constructor(
         _state.value = _state.value.copy(title = title)
     }
 
+    /** 输入草稿自动保存：停止输入 500ms 后持久化，空内容自动清空。 */
+    fun updateDraft(text: String) {
+        draftJob?.cancel()
+        draftJob = viewModelScope.launch {
+            delay(500)
+            val trimmed = text.trim()
+            sessionRepo.saveDraft(sessionId, trimmed.ifBlank { null })
+            _state.value = _state.value.copy(draft = trimmed)
+        }
+    }
+
+    /** 清空输入草稿（发送 / 退出会话时调用）。 */
+    fun clearDraft() = viewModelScope.launch {
+        draftJob?.cancel()
+        sessionRepo.saveDraft(sessionId, null)
+        _state.value = _state.value.copy(draft = "")
+    }
+
+    /** 朗读/停止朗读某条消息（仅对 AI 与错误消息开放）。 */
+    fun toggleSpeak(message: ChatMessage) {
+        if (message.content.isBlank()) return
+        if (ttsManager.isPlaying(message.id)) {
+            ttsManager.stop()
+        } else {
+            ttsManager.speak(message.content, message.id)
+        }
+    }
+
+    fun stopSpeak() = ttsManager.stop()
+
+    /** 导出当前会话为指定格式并调起系统分享。 */
+    fun exportSession(format: ExportFormat) = viewModelScope.launch {
+        exporter.exportAndShare(sessionId, format)
+    }
+
+    override fun onCleared() {
+        ttsManager.stop()
+        super.onCleared()
+    }
+
     /**
      * 语音输入开关：点击开始 / 停止本地识别。
      * 停止时把识别到的文本通过 [onResult] 交回 UI 填入输入框。
@@ -303,4 +367,21 @@ class ChatViewModel @Inject constructor(
     }
 
     private companion object { const val MAX_IMAGES = 4 }
+}
+
+/**
+ * 本地规则生成会话标题：取首条消息第一行、去掉 Markdown 标记、截断到 ~20 字。
+ * 仅在杂项 AI 未返回标题时作为回退，避免千篇一律的"新对话"。
+ */
+private fun localTitle(raw: String): String {
+    val firstLine = raw.lineSequence().firstOrNull { it.isNotBlank() } ?: return ""
+    val cleaned = firstLine
+        .replace(Regex("^#{1,6}\\s+"), "")
+        .replace(Regex("^>\\s?"), "")
+        .replace("`", "")
+        .replace(Regex("\\*\\*|\\*|__|_|~~"), "")
+        .replace(Regex("\\[([^\\]]+)]\\([^)]*\\)"), "$1")
+        .replace(Regex("!\\[[^\\]]*]\\([^)]*\\)"), "[图片]")
+        .trim()
+    return cleaned.take(20).ifBlank { "新对话" }
 }

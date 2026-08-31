@@ -54,12 +54,18 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -104,6 +110,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -111,7 +118,10 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.aioshell.app.core.ui.markdown.markdownToPlainText
+import com.aioshell.app.core.data.audio.TtsState
 import com.aioshell.app.core.data.audio.VoiceModelState
+import com.aioshell.app.core.data.export.ExportFormat
 import com.aioshell.app.core.data.model.ChatMessage
 import com.aioshell.app.core.data.model.MessageAttachment
 import com.aioshell.app.core.data.model.MessageRole
@@ -126,6 +136,8 @@ import com.aioshell.app.core.ui.theme.AppSpacing
 import com.aioshell.app.core.ui.theme.AppTheme
 import com.aioshell.app.core.ui.util.copyTextToClipboard
 import com.aioshell.app.core.ui.components.ErrorState
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -133,16 +145,43 @@ import kotlinx.coroutines.launch
 fun ChatScreen(
     onBack: () -> Unit,
     onGoConfig: () -> Unit,
+    onGoTemplates: () -> Unit,
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
-    var input by rememberSaveable { mutableStateOf("") }
+    var input by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
+    var showMarkdownTools by remember { mutableStateOf(false) }
     var actionTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var viewerPath by remember { mutableStateOf<String?>(null) }
+    var showExportMenu by remember { mutableStateOf(false) }
+    var highlightedId by remember { mutableStateOf<String?>(null) }
+    val ttsState by viewModel.ttsState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+
+    // 从模板管理页返回时，接收所选模板并预填输入框
+    LaunchedEffect(Unit) {
+        TemplateTransfer.pending.collectLatest { template ->
+            if (!template.isNullOrBlank()) {
+                input = TextFieldValue(template)
+                TemplateTransfer.pending.value = null
+            }
+        }
+    }
+
+    // 进入会话时预填已保存的草稿（仅当输入框为空且模板未覆盖）
+    LaunchedEffect(ui.draft) {
+        if (input.text.isBlank() && ui.draft.isNotBlank()) {
+            input = TextFieldValue(ui.draft)
+        }
+    }
+
+    // 输入变化时自动保存草稿（防误触返回丢失输入）
+    LaunchedEffect(input.text) {
+        if (input.text.isNotBlank()) viewModel.updateDraft(input.text)
+    }
 
     val pickImages = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 4),
@@ -177,7 +216,7 @@ fun ChatScreen(
 
     // 语音识别中，实时回显识别文本到输入框
     LaunchedEffect(ui.speechText) {
-        if (ui.isListening) input = ui.speechText
+        if (ui.isListening) input = TextFieldValue(ui.speechText)
     }
 
     // 是否停留在底部（用于智能跟随与"回到底部"按钮）
@@ -194,6 +233,19 @@ fun ChatScreen(
         if (ui.isStreaming && !isAtBottom) return@LaunchedEffect
         val count = ui.messages.size
         if (count > 0 && isAtBottom) listState.animateScrollToItem(count - 1)
+    }
+
+    // 全文搜索定位：滚动并高亮目标消息（仅执行一次）
+    val highlightId = ui.highlightMessageId
+    LaunchedEffect(highlightId) {
+        if (highlightId == null) return@LaunchedEffect
+        val index = ui.messages.indexOfFirst { it.id == highlightId }
+        if (index >= 0) {
+            listState.scrollToItem(index)
+            highlightedId = highlightId
+            delay(1600)
+            highlightedId = null
+        }
     }
 
     fun scrollToBottom() {
@@ -228,6 +280,22 @@ fun ChatScreen(
                             )
                         }
                     }
+                    // 提示词模板库
+                    IconButton(onClick = onGoTemplates) {
+                        Icon(
+                            Icons.Filled.Notes,
+                            contentDescription = "提示词模板",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    // 导出对话
+                    IconButton(onClick = { showExportMenu = true }) {
+                        Icon(
+                            Icons.Filled.Share,
+                            contentDescription = "导出对话",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
@@ -254,7 +322,7 @@ fun ChatScreen(
                         modelState = voiceModelState,
                         onDone = {
                             showVoiceDialog = false
-                            viewModel.toggleVoice { recognized -> input = recognized }
+                            viewModel.toggleVoice { recognized -> input = TextFieldValue(recognized) }
                         },
                         onCancel = {
                             showVoiceDialog = false
@@ -283,38 +351,51 @@ fun ChatScreen(
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     ) {
                         items(ui.messages, key = { it.id }) { msg ->
-                            // AI 消息思考面板（仅当模型开启且存在思考内容）
-                            if (msg.role == MessageRole.ASSISTANT) {
-                                val rc = msg.reasoningContent
-                                if (rc != null && rc.isNotBlank() && ui.reasoningEnabled) {
-                                    var expanded by remember(msg.id) { mutableStateOf(false) }
-                                    ReasoningPanel(
-                                        reasoning = rc,
-                                        isStreaming = msg.status == MessageStatus.SENDING,
-                                        durationMs = msg.reasoningDurationMs?.takeIf { it > 0 },
-                                        expanded = expanded,
-                                        onToggle = { expanded = !expanded },
-                                        modifier = Modifier.padding(bottom = 4.dp),
-                                    )
-                                }
-                            }
-                            // 用户消息附件（图片回显）
-                            if (msg.role == MessageRole.USER && msg.attachments.isNotEmpty()) {
-                                AttachmentRow(msg.attachments, onOpen = { viewerPath = it })
-                            }
-                            MessageBubble(
-                                content = msg.content,
-                                isUser = msg.role == MessageRole.USER,
-                                isError = msg.role == MessageRole.ERROR,
-                                isStreaming = msg.role == MessageRole.ASSISTANT && msg.status == MessageStatus.SENDING,
-                                modifier = Modifier.combinedClickable(
-                                    onClick = {},
-                                    onLongClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        if (msg.role == MessageRole.ASSISTANT || msg.role == MessageRole.ERROR) actionTarget = msg
-                                    },
-                                ),
+                            // 搜索定位高亮：为命中消息加呼吸底色
+                            val isHighlighted = msg.id == highlightedId
+                            val hlAlpha by animateFloatAsState(
+                                targetValue = if (isHighlighted) 0.18f else 0f,
+                                animationSpec = tween(600),
+                                label = "hl_${msg.id}",
                             )
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(AppTheme.colors.primary.copy(alpha = hlAlpha), RoundedCornerShape(AppRadius.md)),
+                            ) {
+                                // AI 消息思考面板（仅当模型开启且存在思考内容）
+                                if (msg.role == MessageRole.ASSISTANT) {
+                                    val rc = msg.reasoningContent
+                                    if (rc != null && rc.isNotBlank() && ui.reasoningEnabled) {
+                                        var expanded by remember(msg.id) { mutableStateOf(false) }
+                                        ReasoningPanel(
+                                            reasoning = rc,
+                                            isStreaming = msg.status == MessageStatus.SENDING,
+                                            durationMs = msg.reasoningDurationMs?.takeIf { it > 0 },
+                                            expanded = expanded,
+                                            onToggle = { expanded = !expanded },
+                                            modifier = Modifier.padding(bottom = 4.dp),
+                                        )
+                                    }
+                                }
+                                // 用户消息附件（图片回显）
+                                if (msg.role == MessageRole.USER && msg.attachments.isNotEmpty()) {
+                                    AttachmentRow(msg.attachments, onOpen = { viewerPath = it })
+                                }
+                                MessageBubble(
+                                    content = msg.content,
+                                    isUser = msg.role == MessageRole.USER,
+                                    isError = msg.role == MessageRole.ERROR,
+                                    isStreaming = msg.role == MessageRole.ASSISTANT && msg.status == MessageStatus.SENDING,
+                                    modifier = Modifier.combinedClickable(
+                                        onClick = {},
+                                        onLongClick = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            if (msg.role == MessageRole.ASSISTANT || msg.role == MessageRole.ERROR) actionTarget = msg
+                                        },
+                                    ),
+                                )
+                            }
                         }
                     }
                     // 上翻历史且出现新消息时显示"回到底部"
@@ -362,12 +443,15 @@ fun ChatScreen(
                 isStreaming = ui.isStreaming,
                 canSend = ui.hasConfig,
                 isListening = ui.isListening,
+                showMarkdownTools = showMarkdownTools,
+                onToggleMarkdownTools = { showMarkdownTools = !showMarkdownTools },
+                onInsertMarkdown = { action -> input = applyMarkdown(input, action) },
                 onPickImage = ::launchPhotoPicker,
                 onVoiceToggle = ::startVoice,
                 onSend = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    viewModel.send(input)
-                    input = ""
+                    viewModel.send(input.text)
+                    input = TextFieldValue("")
                 },
                 onStop = viewModel::stopStreaming,
             )
@@ -379,11 +463,22 @@ fun ChatScreen(
     }
 
     actionTarget?.let { msg ->
+        val isSpeaking = ttsState is TtsState.Playing && (ttsState as TtsState.Playing).utteranceId == msg.id
         MessageActionMenu(
             message = msg,
-            onCopy = {
+            isSpeaking = isSpeaking,
+            onCopyMarkdown = {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 context.copyTextToClipboard("消息", msg.content)
+                actionTarget = null
+            },
+            onCopyPlain = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                context.copyTextToClipboard("消息", markdownToPlainText(msg.content))
+                actionTarget = null
+            },
+            onSpeak = {
+                viewModel.toggleSpeak(msg)
                 actionTarget = null
             },
             onRegenerate = {
@@ -391,6 +486,16 @@ fun ChatScreen(
                 actionTarget = null
             },
             onDismiss = { actionTarget = null },
+        )
+    }
+
+    if (showExportMenu) {
+        ExportFormatMenu(
+            onSelect = { format ->
+                showExportMenu = false
+                viewModel.exportSession(format)
+            },
+            onDismiss = { showExportMenu = false },
         )
     }
 }
@@ -414,11 +519,14 @@ private fun NoConfigBanner(onGoConfig: () -> Unit) {
 
 @Composable
 private fun InputBar(
-    value: String,
-    onChange: (String) -> Unit,
+    value: TextFieldValue,
+    onChange: (TextFieldValue) -> Unit,
     isStreaming: Boolean,
     canSend: Boolean,
     isListening: Boolean,
+    showMarkdownTools: Boolean,
+    onToggleMarkdownTools: () -> Unit,
+    onInsertMarkdown: (MarkdownAction) -> Unit,
     onPickImage: () -> Unit,
     onVoiceToggle: () -> Unit,
     onSend: () -> Unit,
@@ -432,6 +540,16 @@ private fun InputBar(
         shadowElevation = 8.dp,
     ) {
         Column {
+            // Markdown 格式工具栏：点击格式按钮时收起，便于输入
+            if (showMarkdownTools) {
+                MarkdownToolbar(
+                    onAction = { action ->
+                        onInsertMarkdown(action)
+                        onToggleMarkdownTools()
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.md, vertical = 4.dp),
+                )
+            }
             Row(
                 verticalAlignment = Alignment.Bottom,
                 modifier = Modifier.padding(horizontal = AppSpacing.md, vertical = AppSpacing.sm),
@@ -469,6 +587,25 @@ private fun InputBar(
                         contentDescription = "添加图片",
                         tint = c.secondary,
                         modifier = Modifier.size(22.dp),
+                    )
+                }
+
+                Spacer(Modifier.width(AppSpacing.sm))
+
+                // Markdown 工具栏开关
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(if (showMarkdownTools) c.primary.copy(alpha = 0.18f) else c.secondary.copy(alpha = 0.08f))
+                        .clickable { onToggleMarkdownTools() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Notes,
+                        contentDescription = "Markdown 格式",
+                        tint = if (showMarkdownTools) c.primary else c.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
                     )
                 }
 
@@ -529,7 +666,7 @@ private fun InputBar(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(CircleShape)
-                            .background(if (value.isNotBlank()) c.primary else c.secondary.copy(alpha = 0.3f))
+                            .background(if (value.text.isNotBlank()) c.primary else c.secondary.copy(alpha = 0.3f))
                             .shadow(4.dp, CircleShape)
                             .clickable(enabled = canSend) { onSend() },
                         contentAlignment = Alignment.Center,
@@ -537,13 +674,63 @@ private fun InputBar(
                         Icon(
                             Icons.Filled.Send,
                             contentDescription = "发送",
-                            tint = if (value.isNotBlank()) c.onPrimary else c.onSurfaceVariant,
+                            tint = if (value.text.isNotBlank()) c.onPrimary else c.onSurfaceVariant,
                             modifier = Modifier.size(22.dp),
                         )
                     }
                 }
             }
         }
+    }
+}
+
+/** Markdown 快捷格式工具栏。 */
+@Composable
+private fun MarkdownToolbar(
+    onAction: (MarkdownAction) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = AppTheme.colors
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MarkdownToolButton("B", "加粗", { onAction(MarkdownAction.BOLD) }, c, bold = true)
+        MarkdownToolButton("I", "斜体", { onAction(MarkdownAction.ITALIC) }, c, italic = true)
+        MarkdownToolButton("<>", "行内代码", { onAction(MarkdownAction.CODE) }, c)
+        MarkdownToolButton("代码块", "代码块", { onAction(MarkdownAction.CODE_BLOCK) }, c)
+        MarkdownToolButton("H", "标题", { onAction(MarkdownAction.HEADING) }, c)
+        MarkdownToolButton("链接", "链接", { onAction(MarkdownAction.LINK) }, c)
+        MarkdownToolButton("- 列表", "列表", { onAction(MarkdownAction.LIST) }, c)
+    }
+}
+
+/** 单个 Markdown 工具栏按钮。 */
+@Composable
+private fun MarkdownToolButton(
+    label: String,
+    desc: String,
+    onClick: () -> Unit,
+    c: com.aioshell.app.core.ui.theme.AppColorScheme,
+    bold: Boolean = false,
+    italic: Boolean = false,
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(AppRadius.md))
+            .background(c.surface.copy(alpha = 0.5f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (bold) FontWeight.Bold else if (italic) FontWeight.Medium else FontWeight.Normal,
+            fontStyle = if (italic) androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal,
+            color = c.primary,
+        )
     }
 }
 
@@ -615,11 +802,14 @@ private fun ImageViewerDialog(path: String, onDismiss: () -> Unit) {
     }
 }
 
-/** 长按消息的操作菜单（复制 / 重新生成）。 */
+/** 长按消息的操作菜单（复制为 Markdown/纯文本 / 朗读 / 重新生成）。 */
 @Composable
 private fun MessageActionMenu(
     message: ChatMessage,
-    onCopy: () -> Unit,
+    isSpeaking: Boolean,
+    onCopyMarkdown: () -> Unit,
+    onCopyPlain: () -> Unit,
+    onSpeak: () -> Unit,
     onRegenerate: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -636,10 +826,55 @@ private fun MessageActionMenu(
                     .background(c.surfaceVariant, RoundedCornerShape(24.dp))
                     .padding(vertical = AppSpacing.sm),
             ) {
-                ActionItem(Icons.Filled.ContentCopy, "复制", onCopy)
+                ActionItem(Icons.Filled.ContentCopy, "复制为 Markdown", onCopyMarkdown)
+                if (message.content.isNotBlank()) {
+                    ActionItem(Icons.Filled.Description, "复制为纯文本", onCopyPlain)
+                }
+                if (message.content.isNotBlank() && message.role != MessageRole.USER) {
+                    ActionItem(
+                        if (isSpeaking) Icons.Filled.Stop else Icons.Filled.VolumeUp,
+                        if (isSpeaking) "停止朗读" else "朗读",
+                        onSpeak,
+                    )
+                }
                 if (message.content.isNotBlank() && message.role != MessageRole.USER) {
                     ActionItem(Icons.Filled.Refresh, "重新生成", onRegenerate)
                 }
+                ActionItem(null, "取消", onDismiss, tint = c.secondary)
+            }
+        }
+    }
+}
+
+/** 导出格式选择菜单（内嵌底部面板）。 */
+@Composable
+private fun ExportFormatMenu(
+    onSelect: (ExportFormat) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = AppTheme.colors
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier.fillMaxSize().background(Color.Transparent).padding(AppSpacing.lg),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.Bottom,
+        ) {
+            Column(
+                Modifier
+                    .widthIn(max = 360.dp)
+                    .background(c.surfaceVariant, RoundedCornerShape(24.dp))
+                    .padding(vertical = AppSpacing.sm),
+            ) {
+                Text(
+                    "导出对话",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = c.onSurface,
+                    modifier = Modifier.padding(horizontal = AppSpacing.lg, vertical = AppSpacing.sm),
+                )
+                ActionItem(Icons.Filled.Notes, "Markdown", { onSelect(ExportFormat.MARKDOWN) })
+                ActionItem(Icons.Filled.Description, "纯文本", { onSelect(ExportFormat.TEXT) })
+                ActionItem(Icons.Filled.Share, "JSON", { onSelect(ExportFormat.JSON) })
                 ActionItem(null, "取消", onDismiss, tint = c.secondary)
             }
         }

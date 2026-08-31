@@ -72,6 +72,16 @@ internal val WarnD = Color(0xFFFDB022)
 internal val CodeL = Color(0xFFEFF1F3)
 internal val CodeD = Color(0xFF14171C)
 
+// ---- AMOLED 纯黑（OLED 屏省电 / 更纯粹的黑） ----
+/** 纯黑背景：OLED 像素完全关闭。 */
+internal val AmoledBlack = Color(0xFF000000)
+/** 略高于纯黑的表面，用于卡片等抬升层级。 */
+internal val AmoledSurface = Color(0xFF0E0E10)
+/** 表面变体（输入框 / 卡片底），纯黑下最浅一层。 */
+internal val AmoledSurfaceVariant = Color(0xFF17171A)
+/** 最高层表面容器。 */
+internal val AmoledSurfaceHigh = Color(0xFF1F1F24)
+
 // ---- 代码语法高亮色（浅色 / 深色） ----
 internal val CodeKwL = Color(0xFFCF222E)
 internal val CodeKwD = Color(0xFFFF7B72)

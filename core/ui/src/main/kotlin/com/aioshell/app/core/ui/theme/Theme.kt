@@ -6,6 +6,8 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 
 private val DarkColorScheme = darkColorScheme(
     primary = DarkPrimary,
@@ -77,17 +79,91 @@ private val LightColorScheme = lightColorScheme(
     inverseSurface = LightSurfaceDim,
 )
 
+/** 纯黑深色 ColorScheme：背景/表面切换为纯黑，适配 OLED 屏。 */
+private val AmoledColorScheme = darkColorScheme(
+    primary = DarkPrimary,
+    onPrimary = OnDarkPrimary,
+    primaryContainer = DarkPrimaryContainer,
+    onPrimaryContainer = OnDarkPrimaryContainer,
+    secondary = DarkSecondary,
+    onSecondary = OnDarkSecondary,
+    secondaryContainer = DarkSecondaryContainer,
+    onSecondaryContainer = OnDarkSecondaryContainer,
+    tertiary = DarkTertiary,
+    onTertiary = OnDarkTertiary,
+    tertiaryContainer = DarkTertiaryContainer,
+    onTertiaryContainer = OnDarkTertiaryContainer,
+    error = DarkError,
+    onError = OnDarkError,
+    errorContainer = DarkErrorContainer,
+    onErrorContainer = OnDarkErrorContainer,
+    background = AmoledBlack,
+    onBackground = OnDarkBackground,
+    surface = AmoledSurface,
+    onSurface = OnDarkSurface,
+    surfaceVariant = AmoledSurfaceVariant,
+    onSurfaceVariant = OnDarkSurfaceVariant,
+    surfaceDim = AmoledBlack,
+    surfaceBright = AmoledSurfaceHigh,
+    surfaceContainerLowest = AmoledBlack,
+    surfaceContainerLow = AmoledSurface,
+    surfaceContainer = AmoledSurface,
+    surfaceContainerHigh = AmoledSurfaceHigh,
+    surfaceContainerHighest = AmoledSurfaceHigh,
+    outline = DarkOutline,
+    outlineVariant = AmoledSurfaceVariant,
+    inverseSurface = AmoledSurfaceHigh,
+)
+
+/**
+ * 聊天排版自定义参数：字号（sp）与行距（sp）。
+ * 默认值对应 Material 3 bodyLarge（16sp，行高约 24sp）。
+ */
+data class ChatTextSettings(
+    val fontSizeSp: Float = 16f,
+    val lineSpacingSp: Float = 0f,
+)
+
 /** AioShell 主题入口。 */
 @Composable
 fun AioShellTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    amoled: Boolean = false,
+    accent: Color? = null,
+    chatText: ChatTextSettings = ChatTextSettings(),
     content: @Composable () -> Unit,
 ) {
+    val effectiveDark = darkTheme || amoled
+    val base = when {
+        effectiveDark && amoled -> AppAmoledColors.scheme
+        effectiveDark -> AppDarkColors.scheme
+        else -> AppLightColors.scheme
+    }
+    // 自定义强调色：替换 primary / onPrimary / userBubble（含对比度计算）
+    val scheme = if (accent == null) base else {
+        val onAccent = if (accent.luminance() > 0.5f) Color(0xFF000000) else Color(0xFFFFFFFF)
+        base.copy(
+            primary = accent,
+            onPrimary = onAccent,
+            userBubble = accent,
+            onUserBubble = onAccent,
+        )
+    }
+    val m3 = when {
+        effectiveDark && amoled -> AmoledColorScheme
+        effectiveDark -> DarkColorScheme
+        else -> LightColorScheme
+    }
+    val materialScheme = if (accent == null) m3 else {
+        val onAccent = if (accent.luminance() > 0.5f) Color(0xFF000000) else Color(0xFFFFFFFF)
+        m3.copy(primary = accent, onPrimary = onAccent, primaryContainer = accent, onPrimaryContainer = onAccent)
+    }
     CompositionLocalProvider(
-        LocalAppColors provides (if (darkTheme) AppDarkColors.scheme else AppLightColors.scheme),
+        LocalAppColors provides scheme,
+        LocalChatTextSettings provides chatText,
     ) {
         MaterialTheme(
-            colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
+            colorScheme = materialScheme,
             typography = AioTypography,
             shapes = AppShapes.shapes,
             content = content,

@@ -83,6 +83,16 @@ class ConfigRepository @Inject constructor(
 
     suspend fun setActive(id: String) = store.setActiveId(id)
 
+    /** 备份恢复：整体覆盖接口档案列表（API Key 重新加密），并选取活动档案。 */
+    suspend fun restoreAll(saved: List<ChatConfig>) {
+        val list = saved.map {
+            it.copy(id = it.id.ifBlank { UUID.randomUUID().toString() }).toPersisted()
+        }
+        store.saveProfiles(list)
+        val active = list.firstOrNull { it.isDefault } ?: list.firstOrNull()
+        store.setActiveId(active?.id)
+    }
+
     /** 更新某档案的思考模式开关（模型级，多会话共用同一档案同步生效）。 */
     suspend fun setReasoningEnabled(id: String, enabled: Boolean) {
         val list = store.profilesFlow.first().toMutableList()

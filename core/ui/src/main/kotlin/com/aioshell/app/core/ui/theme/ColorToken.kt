@@ -17,6 +17,7 @@ data class AppColorScheme(
     val surfaceVariant: Color,
     val onBackground: Color,
     val onSurface: Color,
+    val onSurfaceVariant: Color,
     val error: Color,
     val onError: Color,
     val success: Color,
@@ -44,6 +45,7 @@ object AppLightColors {
         surfaceVariant = LightSurfaceVariant,
         onBackground = OnLightBackground,
         onSurface = OnLightSurface,
+        onSurfaceVariant = OnLightSurfaceVariant,
         error = LightError,
         onError = OnLightError,
         success = SuccL,
@@ -72,6 +74,7 @@ object AppDarkColors {
         surfaceVariant = DarkSurfaceVariant,
         onBackground = OnDarkBackground,
         onSurface = OnDarkSurface,
+        onSurfaceVariant = OnDarkSurfaceVariant,
         error = DarkError,
         onError = OnDarkError,
         success = SuccD,
@@ -89,5 +92,19 @@ object AppDarkColors {
     )
 }
 
+/** AMOLED 纯黑配色：继承深色语义色，仅将背景/表面改为纯黑系，OLED 屏更省电更纯粹。 */
+object AppAmoledColors {
+    val scheme = AppDarkColors.scheme.copy(
+        background = AmoledBlack,
+        surface = AmoledSurface,
+        surfaceVariant = AmoledSurfaceVariant,
+        aiBubble = AmoledSurfaceVariant,
+        codeBackground = AmoledSurface,
+    )
+}
+
 /** 供业务层直接读取语义色。 */
 val LocalAppColors = staticCompositionLocalOf { AppLightColors.scheme }
+
+/** 聊天排版自定义参数（字号 / 行距），由 AioShellTheme 提供。 */
+val LocalChatTextSettings = staticCompositionLocalOf { ChatTextSettings() }

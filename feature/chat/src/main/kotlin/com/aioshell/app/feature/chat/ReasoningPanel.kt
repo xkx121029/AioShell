@@ -101,7 +101,6 @@ fun ReasoningPanel(
                     text = reasoning,
                     style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
                     color = c.onSurfaceVariant,
-                    lineHeight = 18.dp,
                 )
             }
         }

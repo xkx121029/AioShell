@@ -12,6 +12,12 @@ data class SessionEntity(
     val configId: String,
     val createdAt: Long,
     val updatedAt: Long,
+    /** 是否置顶：置顶会话固定在列表顶部。 */
+    val pinned: Boolean = false,
+    /** 是否已归档：归档会话默认不显示在主列表，可随时恢复。 */
+    val archived: Boolean = false,
+    /** 输入草稿：进入会话自动填充，发送/清空后置空。 */
+    val draft: String? = null,
 )
 
 /** 消息实体。 */
@@ -41,4 +47,15 @@ data class MessageAttachmentEntity(
     val localPath: String,
     val mimeType: String,
     val orderIndex: Int,
+)
+
+/** 提示词模板实体。内置模板 [builtIn] 不可删除，可自定义新增/编辑。 */
+@Entity(tableName = "prompt_template")
+data class PromptTemplateEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val content: String,
+    val category: String,
+    val builtIn: Boolean = false,
+    val orderIndex: Int = 0,
 )

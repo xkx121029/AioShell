@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -62,6 +63,7 @@ fun ConfigSection(
 }
 
 /** 参数滑块：滑块 + 数值，替代纯文本输入。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ParameterSlider(
     label: String,

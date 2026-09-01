@@ -518,7 +518,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sessionGroup(
 @Composable
 private fun GroupHeader(title: String) {
     val c = AppTheme.colors
-    Box(Modifier.padding(top = 6.dp, bottom = 2.dp)) {
+    Box(Modifier.padding(top = AppSpacing.md, bottom = AppSpacing.xs)) {
         Text(
             title,
             style = MaterialTheme.typography.labelMedium,
@@ -581,20 +581,22 @@ private fun SessionListItem(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Text(
-                        item.preview.ifBlank { "（暂无消息）" },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                    Text(
-                        formatTime(item.updatedAt),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = c.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = AppSpacing.xs)) {
+                        Text(
+                            item.preview.ifBlank { "（暂无消息）" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            formatTime(item.updatedAt),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = c.onSurfaceVariant,
+                        )
+                    }
                 }
                 if (!selectionMode) {
                     IconButton(onClick = onPin) {

@@ -3,9 +3,13 @@ package com.aioshell.app.feature.chat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -402,6 +406,8 @@ fun ChatScreen(
                                     isUser = msg.role == MessageRole.USER,
                                     isError = msg.role == MessageRole.ERROR,
                                     isStreaming = msg.role == MessageRole.ASSISTANT && msg.status == MessageStatus.SENDING,
+                                    // 最新一条消息在生成/出现时播放入场动画
+                                    animate = msg.id == ui.messages.lastOrNull()?.id,
                                     modifier = Modifier.combinedClickable(
                                         onClick = {},
                                         onLongClick = {
@@ -738,38 +744,33 @@ private fun InputBar(
 
                 Spacer(Modifier.width(AppSpacing.sm))
 
-                // 发送/停止按钮
-                if (isStreaming) {
+                // 发送/停止按钮：切换时平滑弹性过渡
+                AnimatedContent(
+                    targetState = isStreaming,
+                    modifier = Modifier.size(44.dp),
+                    transitionSpec = {
+                        (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f, animationSpec = tween(200)))
+                            .togetherWith(fadeOut(tween(100)) + scaleOut(targetScale = 0.85f, animationSpec = tween(100)))
+                    },
+                    label = "sendStop",
+                ) { streaming ->
                     Box(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(CircleShape)
-                            .background(c.error.copy(alpha = 0.15f))
-                            .clickable { onStop() },
+                            .background(
+                                if (streaming) c.error.copy(alpha = 0.15f)
+                                else if (value.text.isNotBlank()) c.primary else c.secondary.copy(alpha = 0.3f),
+                            )
+                            .shadow(if (streaming) 0.dp else 4.dp, CircleShape)
+                            .clickable(enabled = if (streaming) true else canSend) { if (streaming) onStop() else onSend() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            Icons.Filled.Stop,
-                            contentDescription = "停止",
-                            tint = c.error,
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(if (value.text.isNotBlank()) c.primary else c.secondary.copy(alpha = 0.3f))
-                            .shadow(4.dp, CircleShape)
-                            .clickable(enabled = canSend) { onSend() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Filled.Send,
-                            contentDescription = "发送",
-                            tint = if (value.text.isNotBlank()) c.onPrimary else c.onSurfaceVariant,
-                            modifier = Modifier.size(22.dp),
+                            if (streaming) Icons.Filled.Stop else Icons.Filled.Send,
+                            contentDescription = if (streaming) "停止" else "发送",
+                            tint = if (streaming) c.error else if (value.text.isNotBlank()) c.onPrimary else c.onSurfaceVariant,
+                            modifier = Modifier.size(if (streaming) 24.dp else 22.dp),
                         )
                     }
                 }

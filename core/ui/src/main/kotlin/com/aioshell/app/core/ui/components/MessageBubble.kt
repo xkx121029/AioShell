@@ -1,12 +1,17 @@
 package com.aioshell.app.core.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.Spring.StiffnessMediumLow
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aioshell.app.core.ui.animation.rememberBlinkingAlpha
 import com.aioshell.app.core.ui.markdown.MarkdownText
+import com.aioshell.app.core.ui.theme.AppMotion
 import com.aioshell.app.core.ui.theme.AppRadius
 import com.aioshell.app.core.ui.theme.AppSpacing
 import com.aioshell.app.core.ui.theme.AppTheme
@@ -56,13 +62,13 @@ fun MessageBubble(
     val c = AppTheme.colors
     val chatText = LocalChatTextSettings.current
     val bubbleColor = when {
-        isUser -> c.primary.copy(alpha = 0.15f)
-        else -> c.surfaceVariant
+        isUser -> c.userBubble.copy(alpha = 0.15f)
+        else -> c.aiBubble
     }
     val textColor = when {
         isError -> c.error
         isUser -> c.onSurface
-        else -> c.onSurface
+        else -> c.onAiBubble
     }
     val bubbleShape = RoundedCornerShape(
         topStart = AppRadius.lg,
@@ -78,41 +84,50 @@ fun MessageBubble(
 
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(250)) + slideInVertically(tween(250)) { it / 8 },
+        enter = fadeIn(tween(AppMotion.durationNormal)) +
+            scaleIn(
+                initialScale = 0.92f,
+                animationSpec = spring(dampingRatio = 0.76f, stiffness = StiffnessMediumLow),
+            ) +
+            slideInVertically(tween(AppMotion.durationNormal)) { it / 10 },
     ) {
-        Row(
+        BoxWithConstraints(
             modifier = modifier.fillMaxWidth().padding(vertical = AppSpacing.sm),
         ) {
-            if (isUser) Spacer(Modifier.weight(1f))
-            Column(
-                Modifier
-                    .widthIn(max = 320.dp)
-                    .shadow(elevation = elevation, shape = bubbleShape)
-                    .background(color = bubbleColor, shape = bubbleShape)
-                    .border(1.dp, borderColor, bubbleShape)
-                    .padding(horizontal = AppSpacing.lg, vertical = AppSpacing.md),
-            ) {
-                if (isUser) {
-                    Text(
-                        content,
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = chatText.fontSizeSp.sp,
-                            lineHeight = (MaterialTheme.typography.bodyLarge.lineHeight.value + chatText.lineSpacingSp).sp,
-                        ),
-                        color = textColor,
-                        fontWeight = FontWeight.Medium,
-                    )
-                } else {
-                    MarkdownText(content, textColor = textColor)
-                }
-                if (isStreaming) {
-                    val alpha = rememberBlinkingAlpha()
-                    Box(Modifier.padding(top = 2.dp).alpha(alpha)) {
-                        Text("▍", color = c.primary, style = MaterialTheme.typography.bodyLarge)
+            // 气泡最大宽度随可用宽度缩放（大屏更好看，替代固定 320dp）
+            val maxBubble = maxWidth * (if (isUser) 0.80f else 0.88f)
+            Row(Modifier.fillMaxWidth()) {
+                if (isUser) Spacer(Modifier.weight(1f))
+                Column(
+                    Modifier
+                        .widthIn(max = maxBubble)
+                        .shadow(elevation = elevation, shape = bubbleShape)
+                        .background(color = bubbleColor, shape = bubbleShape)
+                        .border(1.dp, borderColor, bubbleShape)
+                        .padding(horizontal = AppSpacing.lg, vertical = AppSpacing.md),
+                ) {
+                    if (isUser) {
+                        Text(
+                            content,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = chatText.fontSizeSp.sp,
+                                lineHeight = (MaterialTheme.typography.bodyLarge.lineHeight.value + chatText.lineSpacingSp).sp,
+                            ),
+                            color = textColor,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    } else {
+                        MarkdownText(content, textColor = textColor)
+                    }
+                    if (isStreaming) {
+                        val alpha = rememberBlinkingAlpha()
+                        Box(Modifier.padding(top = 2.dp).alpha(alpha)) {
+                            Text("▍", color = c.primary, style = MaterialTheme.typography.bodyLarge)
+                        }
                     }
                 }
+                if (!isUser) Spacer(Modifier.weight(1f))
             }
-            if (!isUser) Spacer(Modifier.weight(1f))
         }
     }
 }

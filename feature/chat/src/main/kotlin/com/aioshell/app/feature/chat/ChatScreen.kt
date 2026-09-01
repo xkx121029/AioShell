@@ -654,25 +654,6 @@ private fun InputBar(
                 verticalAlignment = Alignment.Bottom,
                 modifier = Modifier.padding(horizontal = AppSpacing.md, vertical = AppSpacing.sm),
             ) {
-                // 语音按钮 - 圆形图标
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (isListening) c.error.copy(alpha = 0.15f) else c.primary.copy(alpha = 0.1f))
-                        .clickable(enabled = !isStreaming) { onVoiceToggle() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Filled.Mic,
-                        contentDescription = if (isListening) "停止语音输入" else "语音输入",
-                        tint = if (isListening) c.error else c.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-
-                Spacer(Modifier.width(AppSpacing.sm))
-
                 // 图片按钮
                 Box(
                     modifier = Modifier
@@ -711,36 +692,43 @@ private fun InputBar(
 
                 Spacer(Modifier.width(AppSpacing.md))
 
-                // 输入框
-                OutlinedTextField(
-                    value = value,
-                    onValueChange = onChange,
+                // 输入框（长按语音输入）
+                // pointerInput 在外层 Box 使用 requireUnconsumed=true + consume()，
+                // 在 TextField 获得焦点前先消耗触摸事件，防止长按前弹出键盘。
+                Box(
                     modifier = Modifier
                         .weight(1f)
                         .heightIn(min = 44.dp, max = 120.dp)
                         .pointerInput(onVoiceToggle) {
                             awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val down = awaitFirstDown(requireUnconsumed = true)
+                                down.consume()
                                 val longPress = awaitLongPressOrCancellation(down.id)
                                 if (longPress != null) onVoiceToggle()
                             }
                         },
-                    placeholder = {
-                        Text(
-                            if (isListening) "正在聆听…" else "输入消息…",
-                            color = c.onSurfaceVariant,
-                        )
-                    },
-                    maxLines = 5,
-                    shape = RoundedCornerShape(AppRadius.md),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = c.surface.copy(alpha = 0.5f),
-                        unfocusedContainerColor = c.surface.copy(alpha = 0.3f),
-                        focusedBorderColor = c.primary,
-                        unfocusedBorderColor = Color.Transparent,
-                        cursorColor = c.primary,
-                    ),
-                )
+                ) {
+                    OutlinedTextField(
+                        value = value,
+                        onValueChange = onChange,
+                        modifier = Modifier.fillMaxSize(),
+                        placeholder = {
+                            Text(
+                                if (isListening) "正在聆听…" else "输入消息…",
+                                color = c.onSurfaceVariant,
+                            )
+                        },
+                        maxLines = 5,
+                        shape = RoundedCornerShape(AppRadius.md),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = c.surface.copy(alpha = 0.5f),
+                            unfocusedContainerColor = c.surface.copy(alpha = 0.3f),
+                            focusedBorderColor = c.primary,
+                            unfocusedBorderColor = Color.Transparent,
+                            cursorColor = c.primary,
+                        ),
+                    )
+                }
 
                 Spacer(Modifier.width(AppSpacing.sm))
 

@@ -1,6 +1,7 @@
 package com.aioshell.app
 
 import android.app.Application
+import com.aioshell.app.core.data.reminder.ReminderManager
 import com.aioshell.app.icon.IconSwitcher
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -13,6 +14,7 @@ import kotlinx.coroutines.launch
 class AioShellApplication : Application() {
 
     @Inject lateinit var iconSwitcher: IconSwitcher
+    @Inject lateinit var reminderManager: ReminderManager
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -20,5 +22,7 @@ class AioShellApplication : Application() {
         super.onCreate()
         // 恢复用户选择的启动器图标
         appScope.launch { runCatching { iconSwitcher.restore() } }
+        // 初始化提醒通知渠道（安卓 8+）
+        runCatching { reminderManager.ensureChannel() }
     }
 }

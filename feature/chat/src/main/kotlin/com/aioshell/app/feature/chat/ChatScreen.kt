@@ -55,11 +55,15 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Psychology
@@ -153,7 +157,18 @@ fun ChatScreen(
     val haptic = LocalHapticFeedback.current
     var input by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
     var showMarkdownTools by remember { mutableStateOf(false) }
+
+    // 快捷指令 / 斜杠命令：输入以 "/" 开头时展示匹配的命令，点击填入对应指令模板
+    val slashText = input.text.trimStart()
+    val matchedCommands = if (slashText.startsWith("/")) {
+        val raw = slashText.substring(1).trim().lowercase()
+        if (raw.isEmpty()) slangCommands
+        else slangCommands.filter { cmd ->
+            cmd.command.lowercase().startsWith("/$raw") || cmd.name.lowercase().contains(raw)
+        }.take(8)
+    } else emptyList()
     var actionTarget by remember { mutableStateOf<ChatMessage?>(null) }
+    var editTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var viewerPath by remember { mutableStateOf<String?>(null) }
     var showExportMenu by remember { mutableStateOf(false) }
     var highlightedId by remember { mutableStateOf<String?>(null) }
@@ -391,10 +406,22 @@ fun ChatScreen(
                                         onClick = {},
                                         onLongClick = {
                                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            if (msg.role == MessageRole.ASSISTANT || msg.role == MessageRole.ERROR) actionTarget = msg
+                                            actionTarget = msg
                                         },
                                     ),
                                 )
+                                // 收藏（星标）标记：右上角星
+                                if (msg.starred) {
+                                    Icon(
+                                        Icons.Filled.Star,
+                                        contentDescription = "已收藏",
+                                        tint = AppTheme.colors.primary,
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(6.dp)
+                                            .size(16.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -436,6 +463,45 @@ fun ChatScreen(
             }
 
             if (!ui.hasConfig) NoConfigBanner(onGoConfig)
+
+            // 斜杠命令调色板
+            if (matchedCommands.isNotEmpty()) {
+                val cc = AppTheme.colors
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = AppSpacing.md, vertical = 4.dp)
+                        .clip(RoundedCornerShape(AppRadius.lg))
+                        .background(cc.surfaceVariant.copy(alpha = 0.9f))
+                        .shadow(4.dp, RoundedCornerShape(AppRadius.lg)),
+                ) {
+                    matchedCommands.forEach { cmd ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    input = TextFieldValue(cmd.prompt)
+                                }
+                                .padding(horizontal = AppSpacing.md, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                cmd.command,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = cc.primary,
+                                modifier = Modifier.padding(end = AppSpacing.md),
+                            )
+                            Text(
+                                cmd.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = cc.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
 
             InputBar(
                 value = input,
@@ -485,7 +551,27 @@ fun ChatScreen(
                 viewModel.regenerate(msg.id)
                 actionTarget = null
             },
+            onEdit = {
+                actionTarget = null
+                editTarget = msg
+            },
+            onToggleStar = {
+                viewModel.toggleStarred(msg.id)
+                actionTarget = null
+            },
             onDismiss = { actionTarget = null },
+        )
+    }
+
+    editTarget?.let { msg ->
+        EditMessageDialog(
+            initial = msg.content,
+            title = if (msg.role == MessageRole.USER) "编辑消息" else "修正回复",
+            onConfirm = { newText ->
+                viewModel.editMessage(msg.id, newText)
+                editTarget = null
+            },
+            onDismiss = { editTarget = null },
         )
     }
 
@@ -494,6 +580,14 @@ fun ChatScreen(
             onSelect = { format ->
                 showExportMenu = false
                 viewModel.exportSession(format)
+            },
+            onExportPng = {
+                showExportMenu = false
+                viewModel.exportLongImage()
+            },
+            onExportPdf = {
+                showExportMenu = false
+                viewModel.exportPdf()
             },
             onDismiss = { showExportMenu = false },
         )
@@ -802,7 +896,7 @@ private fun ImageViewerDialog(path: String, onDismiss: () -> Unit) {
     }
 }
 
-/** 长按消息的操作菜单（复制为 Markdown/纯文本 / 朗读 / 重新生成）。 */
+/** 长按消息的操作菜单（复制 / 朗读 / 收藏 / 编辑 / 重新生成）。 */
 @Composable
 private fun MessageActionMenu(
     message: ChatMessage,
@@ -811,6 +905,8 @@ private fun MessageActionMenu(
     onCopyPlain: () -> Unit,
     onSpeak: () -> Unit,
     onRegenerate: () -> Unit,
+    onEdit: () -> Unit,
+    onToggleStar: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val c = AppTheme.colors
@@ -830,6 +926,16 @@ private fun MessageActionMenu(
                 if (message.content.isNotBlank()) {
                     ActionItem(Icons.Filled.Description, "复制为纯文本", onCopyPlain)
                 }
+                ActionItem(
+                    if (message.starred) Icons.Filled.Star else Icons.Filled.StarBorder,
+                    if (message.starred) "取消收藏" else "收藏",
+                    onToggleStar,
+                )
+                if (message.role == MessageRole.USER) {
+                    ActionItem(Icons.Filled.Edit, "编辑并重新生成", onEdit)
+                } else if (message.content.isNotBlank() && message.role != MessageRole.SYSTEM) {
+                    ActionItem(Icons.Filled.Edit, "编辑消息", onEdit)
+                }
                 if (message.content.isNotBlank() && message.role != MessageRole.USER) {
                     ActionItem(
                         if (isSpeaking) Icons.Filled.Stop else Icons.Filled.VolumeUp,
@@ -846,10 +952,48 @@ private fun MessageActionMenu(
     }
 }
 
+/** 编辑消息对话框。 */
+@Composable
+private fun EditMessageDialog(
+    initial: String,
+    title: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(initial)) }
+    val c = AppTheme.colors
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .widthIn(max = 360.dp)
+                .background(c.surfaceVariant, RoundedCornerShape(24.dp))
+                .padding(20.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = c.onSurface)
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).heightIn(min = 96.dp),
+                placeholder = { Text("输入内容…", color = c.onSurfaceVariant) },
+                shape = RoundedCornerShape(12.dp),
+            )
+            Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) { Text("取消", color = c.secondary) }
+                TextButton(
+                    onClick = { onConfirm(text.text) },
+                    enabled = text.text.isNotBlank(),
+                ) { Text("确定", color = c.primary) }
+            }
+        }
+    }
+}
+
 /** 导出格式选择菜单（内嵌底部面板）。 */
 @Composable
 private fun ExportFormatMenu(
     onSelect: (ExportFormat) -> Unit,
+    onExportPng: () -> Unit,
+    onExportPdf: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val c = AppTheme.colors
@@ -875,7 +1019,15 @@ private fun ExportFormatMenu(
                 ActionItem(Icons.Filled.Notes, "Markdown", { onSelect(ExportFormat.MARKDOWN) })
                 ActionItem(Icons.Filled.Description, "纯文本", { onSelect(ExportFormat.TEXT) })
                 ActionItem(Icons.Filled.Share, "JSON", { onSelect(ExportFormat.JSON) })
+                ActionItem(Icons.Filled.StarBorder, "长图（PNG）", onExportPng)
+                ActionItem(Icons.Filled.PictureAsPdf, "PDF", onExportPdf)
                 ActionItem(null, "取消", onDismiss, tint = c.secondary)
+                Text(
+                    "PNG / PDF 为可视化导出，其它为文本格式。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = c.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = AppSpacing.lg, vertical = 6.dp),
+                )
             }
         }
     }
@@ -1408,3 +1560,20 @@ private fun SoundBars(level: Float, active: Boolean, color: Color, modifier: Mod
         }
     }
 }
+
+/** 快捷指令 / 斜杠命令项：[command] 为输入的缩写，[prompt] 为选中后填入的指令模板。 */
+data class SlashCommand(val command: String, val name: String, val prompt: String)
+
+/** 内置斜杠命令（软件预设，遵循用户常用意图组织）。 */
+private val slangCommands = listOf(
+    SlashCommand("/总结", "总结本对话", "请总结本对话的核心要点与关键结论，用简洁的条目列出，便于快速回顾。"),
+    SlashCommand("/翻译", "翻译为中文", "请把下方内容翻译成流畅自然的中文："),
+    SlashCommand("/润色", "润色文字", "请润色下方文字，使其更通顺、专业且表达清晰："),
+    SlashCommand("/改写", "口语化改写", "请把下方内容改写成更口语化、易于理解的版本："),
+    SlashCommand("/继续", "继续此前话题", "请基于我们之前的讨论继续展开，补充更深入的内容。"),
+    SlashCommand("/编码", "讲解 / 修复代码", "请解释下方代码的作用，并指出可改进或可能出错的地方："),
+    SlashCommand("/头脑风暴", "头脑风暴", "请围绕下方主题发散给出多个有创意的想法或方案："),
+    SlashCommand("/全文", "格式化全文", "请把下方内容规范为结构清晰、带小标题的 Markdown 文档："),
+    SlashCommand("/提问", "列出问题", "请针对下方内容提出几个关键问题，帮助我深入理解："),
+    SlashCommand("/简化", "通俗解释", "请用最通俗易懂的语言，向完全不懂背景的人解释下方内容："),
+)

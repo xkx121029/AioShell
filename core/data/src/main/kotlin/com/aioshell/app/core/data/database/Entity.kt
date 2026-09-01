@@ -18,6 +18,10 @@ data class SessionEntity(
     val archived: Boolean = false,
     /** 输入草稿：进入会话自动填充，发送/清空后置空。 */
     val draft: String? = null,
+    /** 自定义标签（逗号分隔，用于列表筛选）。 */
+    val tags: String? = null,
+    /** 会话级模型覆盖：非空时该会话使用指定模型名（结合当前档案），否则沿用档案模型。 */
+    val modelOverride: String? = null,
 )
 
 /** 消息实体。 */
@@ -34,6 +38,8 @@ data class MessageEntity(
     val status: String,
     val reasoning: String? = null,
     val reasoningDurationMs: Long? = null,
+    /** 是否收藏（星标）：长按收藏重要消息，独立收藏页查看。 */
+    val starred: Boolean = false,
 )
 
 /** 消息附件实体（本地图片引用）。 */

@@ -107,6 +107,201 @@ class ConversationExporter @Inject constructor(
         runCatching { context.startActivity(Intent.createChooser(share, "导出「$title」")) }
     }
 
+    /**
+     * 导出会话为长图（PNG）并分享。
+     * 使用 Canvas + TextPaint 按消息逐块排版渲染，落盘后经 FileProvider 分享。
+     */
+    suspend fun exportAndShareLongImage(sessionId: String): Boolean = withContext(Dispatchers.IO) {
+        val session = sessionRepo.getById(sessionId) ?: return@withContext false
+        val entries = visualEntries(sessionId) ?: return@withContext false
+        val bitmap = renderLongImage(session.title, entries) ?: return@withContext false
+        shareBitmap(bitmap, session.title)
+        true
+    }
+
+    /** 导出会话为 PDF 并分享。 */
+    suspend fun exportAndSharePdf(sessionId: String): Boolean = withContext(Dispatchers.IO) {
+        val session = sessionRepo.getById(sessionId) ?: return@withContext false
+        val entries = visualEntries(sessionId) ?: return@withContext false
+        val file = renderPdf(session.title, entries) ?: return@withContext false
+        shareFile(file, "$session.title 对话导出", "application/pdf", "PDF")
+        true
+    }
+
+    /** 汇总可视化条目（角色 / 时间 / 正文）。 */
+    private suspend fun visualEntries(sessionId: String): List<VisualEntry>? {
+        val messages = messageRepo.getInSession(sessionId).filter { it.content.isNotBlank() }
+        if (messages.isEmpty()) return null
+        return messages.map { VisualEntry(roleLabel(it.role), formatTime(it.createdAt), it.content) }
+    }
+
+    /** 把图片 Bitmap 落盘为 PNG 并分享。 */
+    private fun shareBitmap(bitmap: android.graphics.Bitmap, title: String) {
+        val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val name = "AioShell_${title.safeFile()}_${stamp()}.png"
+        val file = File(dir, name)
+        file.createNewFile()
+        java.io.FileOutputStream(file).use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        shareFile(file, title, "image/png", "长图")
+    }
+
+    /** 通用分享：把文件经 FileProvider 调起系统分享面板。 */
+    private fun shareFile(file: File, title: String, mimeType: String, desc: String) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val share = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(Intent.EXTRA_SUBJECT, "「$title」对话导出")
+        }
+        runCatching { context.startActivity(Intent.createChooser(share, "导出「$title」（$desc）")) }
+    }
+
+    /** 渲染会话为单张长图 Bitmap。 */
+    private fun renderLongImage(title: String, entries: List<VisualEntry>): android.graphics.Bitmap? {
+        val widthPx = 760
+        val pad = 44
+        val maxTextWidth = widthPx - pad * 2
+        val titlePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 42f; color = 0xFF0B6B60.toInt(); isFakeBoldText = true
+        }
+        val rolePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 26f; color = 0xFF0B6B60.toInt(); isFakeBoldText = true
+        }
+        val timePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 20f; color = 0xFF8A8A8E.toInt()
+        }
+        val bodyPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 30f; color = 0xFF1C1C1E.toInt()
+        }
+        val lineSpace = 34
+        val sectionSpace = 26
+
+        // 预排版：角色标题 / 时间戳 / 正文块
+        data class Block(val paint: android.graphics.Paint, val lines: List<String>)
+        val blocks = buildList {
+            add(Block(titlePaint, wrap(titlePaint, title, maxTextWidth)))
+            add(Block(timePaint, wrap(timePaint, "由 AioShell 导出 · ${formatTime(System.currentTimeMillis())}", maxTextWidth)))
+            entries.forEach { e ->
+                add(Block(rolePaint, wrap(rolePaint, "${e.role} · ${e.time}", maxTextWidth)))
+                add(Block(bodyPaint, wrap(bodyPaint, e.content, maxTextWidth)))
+            }
+        }
+        val totalLines = blocks.sumOf { it.lines.size }
+        val heightPx = (pad * 2 + totalLines * lineSpace + blocks.size * sectionSpace).coerceIn(400, 60_000)
+
+        val bitmap = android.graphics.Bitmap.createBitmap(widthPx, heightPx, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        canvas.drawColor(0xFFF7F8FA.toInt())
+        var y = pad + bodyPaint.textSize
+        blocks.forEach { block ->
+            block.lines.forEach { line ->
+                canvas.drawText(line, pad.toFloat(), y.toFloat(), block.paint)
+                y += lineSpace
+            }
+            y += sectionSpace
+        }
+        return bitmap
+    }
+
+    /** 渲染会话为 PDF 文件。 */
+    private fun renderPdf(title: String, entries: List<VisualEntry>): File? {
+        val pdf = android.graphics.pdf.PdfDocument()
+        val width = 595; val height = 842; val margin = 48
+        val maxTextWidth = width - margin * 2
+        val rolePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 30f; color = 0xFF0B6B60.toInt(); isFakeBoldText = true
+        }
+        val bodyPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 28f; color = 0xFF1C1C1E.toInt()
+        }
+        val titlePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 40f; color = 0xFF0B6B60.toInt(); isFakeBoldText = true
+        }
+
+        val lineSpace = 40
+        var page = pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(width, height, 1).create())
+        var canvas = page.canvas
+        canvas.drawColor(0xFFF7F8FA.toInt())
+        var y = 80
+
+        // 需要换页时才滚动到新页
+        fun ensureSpace() {
+            if (y > height - margin) {
+                pdf.finishPage(page)
+                page = pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(width, height, 1).create())
+                canvas = page.canvas
+                canvas.drawColor(0xFFF7F8FA.toInt())
+                y = 80
+            }
+        }
+
+        fun drawBlock(paint: android.graphics.Paint, text: String) {
+            wrap(paint, text, maxTextWidth).forEach { line ->
+                ensureSpace()
+                canvas.drawText(line, margin.toFloat(), y.toFloat(), paint)
+                y += lineSpace
+            }
+            y += lineSpace
+        }
+
+        drawBlock(titlePaint, title)
+        drawBlock(rolePaint, "由 AioShell 导出 · ${formatTime(System.currentTimeMillis())}")
+        entries.forEach { e ->
+            drawBlock(rolePaint, "${e.role} · ${e.time}")
+            drawBlock(bodyPaint, e.content)
+        }
+
+        // 结束当前页并写出
+        pdf.finishPage(page)
+        val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val file = File(dir, "AioShell_${title.safeFile()}_${stamp()}.pdf")
+        java.io.FileOutputStream(file).use { pdf.writeTo(it) }
+        pdf.close()
+        return file
+    }
+
+    /** 可排版的换行：把多行文本（含换行）按宽度折断为多行。 */
+    private fun wrap(paint: android.graphics.Paint, text: String, maxWidth: Int): List<String> =
+        text.split("\n").flatMap { line -> linesOf(paint, line, maxWidth) }.ifEmpty { listOf(" ") }
+
+    /** 把一行文本按宽度折断为多行。 */
+    private fun linesOf(
+        paint: android.graphics.Paint,
+        text: String,
+        maxWidth: Int,
+    ): List<String> {
+        if (text.isEmpty()) return listOf(" ")
+        if (paint.measureText(text) <= maxWidth) return listOf(text)
+        val result = mutableListOf<String>()
+        val arr = text.toCharArray()
+        val sb = StringBuilder()
+        var i = 0
+        while (i < arr.size) {
+            sb.append(arr[i])
+            if (paint.measureText(sb.toString()) > maxWidth) {
+                if (sb.length == 1) { result.add(sb.toString()); sb.clear() }
+                else {
+                    sb.deleteCharAt(sb.length - 1)
+                    result.add(sb.toString())
+                    sb.clear()
+                    // 当前字符留到下一轮
+                    i-- // will re-append arr[i]
+                }
+            }
+            i++
+        }
+        if (sb.isNotEmpty()) result.add(sb.toString())
+        return result
+    }
+
+    /** 根据角色 / 时间组装可视化条目。 */
+    private data class VisualEntry(val role: String, val time: String, val content: String)
+
+    private fun String.safeFile(): String = this.replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").take(24).ifBlank { "对话" }
+
+    private fun stamp(): String = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+
     private fun roleLabel(role: MessageRole): String = when (role) {
         MessageRole.USER -> "我"
         MessageRole.ASSISTANT -> "AI"

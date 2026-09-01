@@ -27,6 +27,8 @@ class SessionRepository @Inject constructor(private val db: AppDatabase) {
         val pinned: Boolean = false,
         val archived: Boolean = false,
         val draft: String? = null,
+        val tags: List<String> = emptyList(),
+        val modelOverride: String? = null,
         val lastMessagePreview: String = "",
     )
 
@@ -41,18 +43,12 @@ class SessionRepository @Inject constructor(private val db: AppDatabase) {
     )
 
     val sessions: Flow<List<SessionSummary>> = dao.observeAll().map { list ->
-        list.map { s ->
-            val preview = messageDao.getInSession(s.id).lastOrNull()?.content.orEmpty()
-            SessionSummary(s.id, s.title, s.configId, s.createdAt, s.updatedAt, s.pinned, s.archived, s.draft, summarizePreview(preview))
-        }
+        list.map { s -> toSummary(s, summarizePreview(messageDao.getInSession(s.id).lastOrNull()?.content.orEmpty())) }
     }
 
     /** 归档会话列表。 */
     val archivedSessions: Flow<List<SessionSummary>> = dao.observeArchived().map { list ->
-        list.map { s ->
-            val preview = messageDao.getInSession(s.id).lastOrNull()?.content.orEmpty()
-            SessionSummary(s.id, s.title, s.configId, s.createdAt, s.updatedAt, s.pinned, s.archived, s.draft, summarizePreview(preview))
-        }
+        list.map { s -> toSummary(s, summarizePreview(messageDao.getInSession(s.id).lastOrNull()?.content.orEmpty())) }
     }
 
     suspend fun create(title: String = "新对话", configId: String): String {
@@ -108,8 +104,74 @@ class SessionRepository @Inject constructor(private val db: AppDatabase) {
     suspend fun withPreviewsAll(): List<SessionSummary> {
         return dao.getAllIncludeArchived().map { s ->
             val last = messageDao.getInSession(s.id).lastOrNull()
-            SessionSummary(s.id, s.title, s.configId, s.createdAt, s.updatedAt, s.pinned, s.archived, s.draft, last?.content.orEmpty())
+            toSummary(s, last?.content.orEmpty())
         }
+    }
+
+    /** 实体 → 列表摘要（解析逗号分隔标签）。 */
+    private fun toSummary(s: SessionEntity, preview: String): SessionSummary =
+        SessionSummary(
+            id = s.id, title = s.title, configId = s.configId, createdAt = s.createdAt,
+            updatedAt = s.updatedAt, pinned = s.pinned, archived = s.archived, draft = s.draft,
+            tags = parseTags(s.tags), modelOverride = s.modelOverride, lastMessagePreview = preview,
+        )
+
+    /** 解析逗号分隔标签为去空白、去重的集合。 */
+    fun parseTags(raw: String?): List<String> =
+        raw?.split(',')?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct().orEmpty()
+
+    fun joinTags(tags: List<String>): String? = tags.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        .joinToString(",").takeIf { it.isNotBlank() }
+
+    /** 设置 / 清空会话标签。 */
+    suspend fun setTags(id: String, tags: List<String>) = dao.setTags(id, joinTags(tags))
+
+    /** 设置 / 清空会话级模型覆盖（null 表示沿用档案模型）。 */
+    suspend fun setModelOverride(id: String, model: String?) = dao.setModelOverride(id, model?.trim()?.takeIf { it.isNotBlank() })
+
+    /**
+     * 复制会话：以新 id 创建会话，并以递增时间戳复制其全部消息（含附件）。
+     * 返回新会话 id。
+     */
+    suspend fun duplicate(originId: String, configId: String): String? = db.withTransaction {
+        val origin = dao.getById(originId) ?: return@withTransaction null
+        val newId = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        // 原会话按 id 字符串排序，转换为递增 createdAt 以保持顺序
+        val originMsgs = messageDao.getInSession(originId)
+        dao.insert(
+            SessionEntity(
+                id = newId, title = "${origin.title}（副本）", configId = configId,
+                createdAt = now, updatedAt = now, tags = origin.tags, modelOverride = origin.modelOverride,
+            ),
+        )
+        val base = now
+        originMsgs.forEachIndexed { idx, m ->
+            messageDao.insert(m.copy(id = UUID.randomUUID().toString(), sessionId = newId, createdAt = base + idx))
+        }
+        newId
+    }
+
+    /**
+     * 合并会话：把源会话 [sourceId] 的全部消息追加到目标会话 [targetId]，
+     * 然后删除源会话（含附件），使消息时间连续。返回合并后的会话 id。
+     */
+    suspend fun merge(targetId: String, sourceId: String): String {
+        db.withTransaction {
+            val target = dao.getById(targetId) ?: error("目标会话不存在")
+            val sourceMsgs = messageDao.getInSession(sourceId)
+            // 以目标会话最后一条消息时间为基准，确保新增消息在其后
+            val lastTarget = messageDao.getInSession(targetId).lastOrNull()?.createdAt ?: target.updatedAt
+            var cursor = lastTarget + 1
+            sourceMsgs.forEach { m ->
+                messageDao.insertOrReplace(m.copy(id = UUID.randomUUID().toString(), sessionId = targetId, createdAt = cursor))
+                cursor++
+            }
+            dao.deleteById(sourceId)
+            messageDao.deleteBySession(sourceId)
+            dao.touch(targetId, System.currentTimeMillis())
+        }
+        return targetId
     }
 
     /** 会话统计。 */
@@ -168,6 +230,22 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
         dao.search(query).map { it.toDomain() }
 
     suspend fun getById(id: String): ChatMessage? = dao.getById(id)?.toDomain()
+
+    /** 收藏（星标）消息：跨会话集中展示。 */
+    fun observeStarred(): Flow<List<ChatMessage>> =
+        dao.observeStarred().map { list -> list.map { it.toDomain() } }
+
+    /** 收藏 / 取消收藏消息。 */
+    suspend fun toggleStarred(id: String) {
+        val cur = dao.getById(id) ?: return
+        dao.setStarred(id, !cur.starred)
+    }
+
+    /** 编辑消息正文（用户消息编辑 / 修正后用）。 */
+    suspend fun updateContent(id: String, content: String) {
+        val existing = dao.getById(id) ?: return
+        dao.updateContent(id, content)
+    }
 
     suspend fun addUserMessage(sessionId: String, content: String, attachmentPaths: List<String> = emptyList()): ChatMessage {
         val msg = insert(sessionId, "user", content)
@@ -238,7 +316,7 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
         return ChatMessage(
             id = id, sessionId = sessionId, role = r, content = content, createdAt = createdAt,
             status = s, reasoningContent = reasoning, reasoningDurationMs = reasoningDurationMs,
-            attachments = attachments,
+            attachments = attachments, starred = starred,
         )
     }
 }

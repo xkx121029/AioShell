@@ -6,6 +6,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -38,9 +41,22 @@ class MainActivity : ComponentActivity() {
                 accent = parseAccent(accentHex),
                 chatText = chatText ?: com.aioshell.app.core.ui.theme.ChatTextSettings(),
             ) {
-                AioAppNav()
+                AppLockGate()
             }
         }
+    }
+}
+
+/** 应用锁门卫：若开启应用锁则先显示解锁界面，解锁后进入主界面。 */
+@androidx.compose.runtime.Composable
+private fun AppLockGate() {
+    val lockVm: LockViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+    val unlocked = remember { mutableStateOf(false) }
+    val lockEnabled by lockVm.lockEnabled.collectAsStateWithLifecycle(initialValue = false)
+    if (lockEnabled && !unlocked.value) {
+        LockScreen(onUnlock = { unlocked.value = true })
+    } else {
+        AioAppNav()
     }
 }
 

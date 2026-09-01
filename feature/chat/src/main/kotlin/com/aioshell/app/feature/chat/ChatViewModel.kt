@@ -15,6 +15,7 @@ import com.aioshell.app.core.data.export.ExportFormat
 import com.aioshell.app.core.data.image.ImageProcessor
 import com.aioshell.app.core.data.model.ChatConfig
 import com.aioshell.app.core.data.model.ChatMessage
+import com.aioshell.app.core.data.model.MessageRole
 import com.aioshell.app.core.data.model.MiscAiMeta
 import com.aioshell.app.core.data.network.ApiException
 import com.aioshell.app.core.data.network.ChatStreamEvent
@@ -23,6 +24,7 @@ import com.aioshell.app.core.data.repository.ConfigRepository
 import com.aioshell.app.core.data.repository.MessageRepository
 import com.aioshell.app.core.data.repository.MiscAiRepository
 import com.aioshell.app.core.data.repository.SessionRepository
+import com.aioshell.app.core.data.store.SettingsStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -68,6 +70,7 @@ class ChatViewModel @Inject constructor(
     private val modelManager: ModelManager,
     private val ttsManager: TtsManager,
     private val exporter: ConversationExporter,
+    private val settingsStore: SettingsStore,
     @ApplicationContext private val appContext: Context,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -89,6 +92,10 @@ class ChatViewModel @Inject constructor(
     private var voiceJob: Job? = null
     private var draftJob: Job? = null
     private var speechAccumulated = ""
+
+    /** 上下文长度上限（用户+AI 历史条数，0 不限制）与自动朗读开关，来自设置。 */
+    private var contextCount = 60
+    private var autoTtsEnabled = false
 
     /** 语音模型下载 / 加载状态（来自 [ModelManager]）。 */
     val voiceModelState: StateFlow<VoiceModelState> = modelManager.state
@@ -117,6 +124,8 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
+        viewModelScope.launch { settingsStore.contextMessageCount.collect { contextCount = it } }
+        viewModelScope.launch { settingsStore.autoTts.collect { autoTtsEnabled = it } }
     }
 
     /** 图片选择（Photo Picker 回调）：压缩到私有目录，存入待发送列表。 */
@@ -148,6 +157,9 @@ class ChatViewModel @Inject constructor(
         streamingJob = viewModelScope.launch {
             _state.value = _state.value.copy(isStreaming = true)
             try {
+                // 会话级模型覆盖：该会话指定模型时优先，否则沿用档案模型
+                val session = sessionRepo.getById(sessionId)
+                val effectiveCfg = session?.modelOverride?.takeIf { it.isNotBlank() && it != cfg.model }?.let { cfg.copy(model = it) } ?: cfg
                 // 是否为会话首条消息（新建对话的第一条用户消息）
                 val isFirst = messageRepo.getInSession(sessionId).isEmpty()
                 val imagePaths = images.map { it.path }
@@ -158,7 +170,7 @@ class ChatViewModel @Inject constructor(
 
                 // 首条消息：用"杂项 AI"命名对话 + 分析意图，并把身份/风格建议注入主模型
                 val systemPrompt = if (isFirst) {
-                    val meta = chatRepo.analyze(pickMiscAiConfig(cfg), raw, pickMiscAiPrompt())
+                    val meta = chatRepo.analyze(pickMiscAiConfig(effectiveCfg), raw, pickMiscAiPrompt())
                     val finalTitle = meta.title.ifBlank { localTitle(raw) }
                     if (finalTitle.isNotBlank() && finalTitle != "新对话") {
                         sessionRepo.rename(sessionId, finalTitle)
@@ -177,7 +189,7 @@ class ChatViewModel @Inject constructor(
                 val imageBase64s = withContext(Dispatchers.IO) {
                     imagePaths.map { ImageProcessor.encodeToBase64(File(it)) }
                 }
-                streamAssistant(cfg, assistant, history, imageBase64s, systemPrompt)
+                streamAssistant(effectiveCfg, assistant, history, imageBase64s, systemPrompt, contextCount)
                 sessionRepo.touch(sessionId)
             } finally {
                 _state.value = _state.value.copy(isStreaming = false)
@@ -215,11 +227,12 @@ class ChatViewModel @Inject constructor(
         history: List<ChatMessage>,
         imageBase64s: List<String>,
         systemPrompt: String? = null,
+        contextCount: Int = 0,
     ) {
         var acc = ""
         var reasoningAcc = ""
         runCatching {
-            chatRepo.streamChatWithReasoning(cfg, history, imageBase64s, systemPrompt).collect { event ->
+            chatRepo.streamChatWithReasoning(cfg, history, imageBase64s, systemPrompt, contextCount).collect { event ->
                 when (event) {
                     is ChatStreamEvent.ReasoningDelta -> {
                         reasoningAcc += event.text
@@ -238,6 +251,10 @@ class ChatViewModel @Inject constructor(
             }
         }.onSuccess {
             messageRepo.markAssistantDone(assistant.id)
+            // AI 回复自动朗读：完成后若开启且内容非空，则用系统 TTS 朗读
+            if (autoTtsEnabled && acc.isNotBlank()) {
+                ttsManager.speak(acc.trim(), assistant.id)
+            }
         }.onFailure { e ->
             val msg = (e as? ApiException)?.message ?: (e.message ?: "请求失败")
             messageRepo.markAssistantError(assistant.id, msg)
@@ -265,7 +282,9 @@ class ChatViewModel @Inject constructor(
                 val assistant = messageRepo.addAssistantMessage(sessionId)
                 val history = messageRepo.getInSession(sessionId).filterNot { it.id == assistant.id }
                 if (history.isEmpty()) { messageRepo.delete(assistant.id); return@launch }
-                streamAssistant(cfg, assistant, history, emptyList())
+                val session = sessionRepo.getById(sessionId)
+                val effectiveCfg = session?.modelOverride?.takeIf { it.isNotBlank() && it != cfg.model }?.let { cfg.copy(model = it) } ?: cfg
+                streamAssistant(effectiveCfg, assistant, history, emptyList(), null, contextCount)
                 sessionRepo.touch(sessionId)
             } finally {
                 _state.value = _state.value.copy(isStreaming = false)
@@ -277,6 +296,50 @@ class ChatViewModel @Inject constructor(
     fun toggleReasoning() {
         val cfg = activeConfig.value ?: return
         viewModelScope.launch { configRepo.setReasoningEnabled(cfg.id, !_state.value.reasoningEnabled) }
+    }
+
+    /** 收藏 / 取消收藏消息。 */
+    fun toggleStarred(messageId: String) = viewModelScope.launch {
+        messageRepo.toggleStarred(messageId)
+    }
+
+    /**
+     * 编辑消息正文。若被编辑的是"用户消息"，删除其之后的所有消息并重新生成 AI 回复；
+     * 若是 AI 消息，则仅修正本地正文（作为手动备注）。
+     */
+    fun editMessage(messageId: String, newContent: String) {
+        val raw = newContent.trim()
+        if (raw.isEmpty()) return
+        val target = _state.value.messages.firstOrNull { it.id == messageId } ?: return
+        if (_state.value.isStreaming) return
+        viewModelScope.launch {
+            messageRepo.updateContent(messageId, raw)
+            // 仅用户消息编辑触发重新生成：删除后续消息（含本条用户消息之后的 AI 回复）
+            if (target.role == MessageRole.USER) {
+                val messages = _state.value.messages
+                val idx = messages.indexOfFirst { it.id == messageId }
+                val toDelete = messages.drop(idx + 1).map { it.id }
+                toDelete.forEach { messageRepo.delete(it) }
+                val cfg = activeConfig.value ?: return@launch
+                val session = sessionRepo.getById(sessionId)
+                val effectiveCfg = session?.modelOverride?.takeIf { it.isNotBlank() && it != cfg.model }?.let { cfg.copy(model = it) } ?: cfg
+                val assistant = messageRepo.addAssistantMessage(sessionId)
+                val history = messageRepo.getInSession(sessionId).filterNot { it.id == assistant.id }
+                if (history.isEmpty()) { messageRepo.delete(assistant.id); return@launch }
+                streamingJob?.cancel()
+                _state.value = _state.value.copy(isStreaming = true)
+                streamingJob = viewModelScope.launch {
+                    try {
+                        streamAssistant(effectiveCfg, assistant, history, emptyList(), null, contextCount)
+                        sessionRepo.touch(sessionId)
+                    } finally {
+                        _state.value = _state.value.copy(isStreaming = false)
+                    }
+                }
+            } else {
+                sessionRepo.touch(sessionId)
+            }
+        }
     }
 
     fun rename(title: String) = viewModelScope.launch {
@@ -317,6 +380,16 @@ class ChatViewModel @Inject constructor(
     /** 导出当前会话为指定格式并调起系统分享。 */
     fun exportSession(format: ExportFormat) = viewModelScope.launch {
         exporter.exportAndShare(sessionId, format)
+    }
+
+    /** 导出当前会话为长图并分享。 */
+    fun exportLongImage() = viewModelScope.launch(Dispatchers.IO) {
+        exporter.exportAndShareLongImage(sessionId)
+    }
+
+    /** 导出当前会话为 PDF 并分享。 */
+    fun exportPdf() = viewModelScope.launch(Dispatchers.IO) {
+        exporter.exportAndSharePdf(sessionId)
     }
 
     override fun onCleared() {

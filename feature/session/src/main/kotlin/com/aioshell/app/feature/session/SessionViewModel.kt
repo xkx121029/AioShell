@@ -28,6 +28,7 @@ data class SessionUiItem(
     val updatedAt: Long,
     val preview: String,
     val pinned: Boolean = false,
+    val tags: List<String> = emptyList(),
 )
 
 data class SessionUiState(
@@ -45,6 +46,9 @@ data class SessionUiState(
 /** 备份 / 恢复操作的反馈消息。 */
 data class BackupNotice(val ok: Boolean, val message: String)
 
+/** Token 单价（美元 / 每百万 token），用于费用估算展示。 */
+data class CostPrices(val input: Float = 0f, val output: Float = 0f)
+
 @HiltViewModel
 class SessionViewModel @Inject constructor(
     private val sessionRepo: SessionRepository,
@@ -59,6 +63,13 @@ class SessionViewModel @Inject constructor(
 
     /** 会话统计（仅在统计页加载）。 */
     val stats = MutableStateFlow<SessionRepository.SessionStats?>(null)
+
+    /** Token 单价（统计页费用估算用）。 */
+    val costPrices: StateFlow<CostPrices> = combine(
+        settingsStore.tokenInputPrice,
+        settingsStore.tokenOutputPrice,
+    ) { input, output -> CostPrices(input, output) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CostPrices())
 
     fun loadStats() = viewModelScope.launch(Dispatchers.IO) {
         stats.value = sessionRepo.getStats()
@@ -128,6 +139,24 @@ class SessionViewModel @Inject constructor(
     /** 快速切换当前接口配置（不进设置页）。 */
     fun setActiveConfig(id: String) = viewModelScope.launch { configRepo.setActive(id) }
 
+    /** 设置 / 清空会话标签。 */
+    fun setTags(id: String, tags: List<String>) = viewModelScope.launch { sessionRepo.setTags(id, tags) }
+
+    /** 设置 / 清空会话级模型覆盖。 */
+    fun setModelOverride(id: String, model: String?) = viewModelScope.launch { sessionRepo.setModelOverride(id, model) }
+
+    /** 复制会话：返回新会话 id（用于导航打开）。 */
+    fun duplicate(id: String, onResult: (String) -> Unit) = viewModelScope.launch {
+        val cfgId = uiState.value.activeConfigId
+        val newId = (if (cfgId != null) sessionRepo.duplicate(id, cfgId) else null) ?: return@launch
+        onResult(newId)
+    }
+
+    /** 合并会话：把 [sourceId] 并入 [targetId]，删除源会话。 */
+    fun merge(targetId: String, sourceId: String) = viewModelScope.launch {
+        runCatching { sessionRepo.merge(targetId, sourceId) }
+    }
+
     /** 循环切换主题模式：浅色 → 深色 → 跟随系统。 */
     fun cycleTheme() = viewModelScope.launch {
         val next = when (uiState.value.themeMode) {
@@ -184,4 +213,4 @@ class SessionViewModel @Inject constructor(
 
 /** 会话摘要 → 列表展示项。 */
 private fun com.aioshell.app.core.data.repository.SessionRepository.SessionSummary.toUiItem(): SessionUiItem =
-    SessionUiItem(id, title, updatedAt, lastMessagePreview, pinned)
+    SessionUiItem(id, title, updatedAt, lastMessagePreview, pinned, tags)

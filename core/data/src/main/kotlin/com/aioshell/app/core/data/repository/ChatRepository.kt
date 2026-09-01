@@ -36,14 +36,21 @@ class ChatRepository @Inject constructor(private val apiClient: ApiClient) {
      * 携带历史消息发起流式对话（含思考分流）。
      * @param systemPrompt 可选的 system 握手信息（例如杂项 AI 给出的身份/风格建议），非空则置于消息最前。
      * @param imageBase64s 当前用户消息携带的图片（base64，可空）。图片附加到最后一条用户消息。
+     * @param contextCount 最多携带的历史消息条数（0 表示不限制）。用于"上下文长度控制"，控制用量与成本。
      */
     fun streamChatWithReasoning(
         config: ChatConfig,
         history: List<ChatMessage>,
         imageBase64s: List<String> = emptyList(),
         systemPrompt: String? = null,
+        contextCount: Int = 0,
     ): Flow<ChatStreamEvent> {
-        val kept = history.filter { it.roleToApi() != null && it.content.isNotBlank() }
+        var kept = history.filter { it.roleToApi() != null && it.content.isNotBlank() }
+        // 上下文长度控制：仅保留最近 contextCount 条消息，且尽量保留最后一条用户消息
+        if (contextCount > 0 && kept.size > contextCount) {
+            while (kept.size > contextCount && kept.first().roleToApi() == "assistant") kept = kept.drop(1)
+            if (kept.size > contextCount) kept = kept.takeLast(contextCount)
+        }
         val body = mutableListOf<RequestMessage>()
         if (!systemPrompt.isNullOrBlank()) {
             body += RequestMessage("system", JsonPrimitive(systemPrompt))

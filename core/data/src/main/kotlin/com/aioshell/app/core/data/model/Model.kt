@@ -63,4 +63,6 @@ data class ChatMessage(
     val reasoningContent: String? = null,
     val reasoningDurationMs: Long? = null,
     val attachments: List<MessageAttachment> = emptyList(),
+    /** 是否收藏（星标）。 */
+    val starred: Boolean = false,
 )

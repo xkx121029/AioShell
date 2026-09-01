@@ -18,11 +18,18 @@ import javax.inject.Singleton
 @Singleton
 class SecurityCrypto @Inject constructor() {
 
-    private companion object {
+    companion object {
         const val ALIAS = "aioshell_master_key"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_SIZE = 12
         const val TAG_SIZE_BITS = 128
+
+        /** 计算 PIN 的 SHA-256 十六进制摘要，用于本地校验（不存明文）。 */
+        fun sha256Hex(input: String): String {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(input.toByteArray(Charsets.UTF_8))
+            return digest.joinToString("") { "%02x".format(it) }
+        }
     }
 
     private val masterKey: SecretKey by lazy(::getOrCreateKey)

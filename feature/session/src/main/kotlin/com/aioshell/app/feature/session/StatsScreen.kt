@@ -17,6 +17,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.MonetizationOn
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.SendToMobile
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Speed
@@ -49,9 +51,11 @@ import java.util.Locale
 @Composable
 fun StatsScreen(
     onBack: () -> Unit,
+    onGoReminders: () -> Unit = {},
     viewModel: SessionViewModel = hiltViewModel(),
 ) {
     val stats by viewModel.stats.collectAsStateWithLifecycle()
+    val prices by viewModel.costPrices.collectAsStateWithLifecycle()
     val c = AppTheme.colors
     LaunchedEffect(Unit) { viewModel.loadStats() }
 
@@ -70,6 +74,11 @@ fun StatsScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = c.onSurface)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onGoReminders) {
+                        Icon(Icons.Filled.Notifications, contentDescription = "定时提醒", tint = c.onSurface)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.background),
@@ -91,9 +100,13 @@ fun StatsScreen(
                 itemsIndexed(statItems(s)) { index, item ->
                     StatRow(item.icon, item.label, item.value)
                 }
+                item(key = "cost") {
+                    val cost = estimateCost(s, prices)
+                    StatRow(Icons.Filled.MonetizationOn, "费用估算（美元）", cost)
+                }
                 item(key = "note") {
                     Text(
-                        "Token 为按字符粗略估算的参考值，便于了解大致用量，非精确计费。",
+                        "Token 为按字符粗略估算的参考值，便于了解大致用量。费用 = 估算 Token × 设定单价（在『界面自定义』> Token 单价 中调整），非精确计费。",
                         style = MaterialTheme.typography.labelSmall,
                         color = c.onSurfaceVariant,
                         modifier = Modifier.padding(top = AppSpacing.sm),
@@ -113,6 +126,14 @@ private fun statItems(s: SessionRepository.SessionStats): List<StatRowItem> = li
     StatRowItem(Icons.Filled.Edit, "总字符数", String.format(Locale.getDefault(), "%,d", s.totalChars)),
     StatRowItem(Icons.Filled.Speed, "累计 Token（估）", String.format(Locale.getDefault(), "%,d", s.estimatedTokens)),
 )
+
+/** 估算累计费用（美元）。入参+出参合计，token × 单价（美元/百万）/ 1,000,000。 */
+private fun estimateCost(s: SessionRepository.SessionStats, prices: CostPrices): String {
+    val avg = if (prices.input > 0f || prices.output > 0f) (prices.input + prices.output) / 2f else 0f
+    if (avg <= 0f) return "未设定单价"
+    val usd = s.estimatedTokens * avg / 1_000_000f
+    return "$${String.format(Locale.getDefault(), "%.4f", usd.coerceAtLeast(0f))}"
+}
 
 @Composable
 private fun StatRow(icon: ImageVector, label: String, value: String) {

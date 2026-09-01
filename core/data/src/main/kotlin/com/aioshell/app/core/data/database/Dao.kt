@@ -58,6 +58,12 @@ interface SessionDao {
     @Query("UPDATE session SET draft = :draft WHERE id = :id")
     suspend fun setDraft(id: String, draft: String?)
 
+    @Query("UPDATE session SET tags = :tags WHERE id = :id")
+    suspend fun setTags(id: String, tags: String?)
+
+    @Query("UPDATE session SET modelOverride = :modelOverride WHERE id = :id")
+    suspend fun setModelOverride(id: String, modelOverride: String?)
+
     @Delete
     suspend fun delete(entity: SessionEntity)
 
@@ -78,6 +84,16 @@ interface MessageDao {
 
     @Query("SELECT * FROM message WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): MessageEntity?
+
+    /** 收藏（星标）消息：跨会话集中展示，按收藏时间倒序。 */
+    @Query("SELECT * FROM message WHERE starred = 1 ORDER BY createdAt DESC")
+    fun observeStarred(): Flow<List<MessageEntity>>
+
+    @Query("UPDATE message SET starred = :starred WHERE id = :id")
+    suspend fun setStarred(id: String, starred: Boolean)
+
+    @Query("UPDATE message SET content = :content WHERE id = :id")
+    suspend fun updateContent(id: String, content: String)
 
     /**
      * 全文搜索：按关键词（忽略大小写）在所有会话中匹配消息正文，

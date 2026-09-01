@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MessageAttachmentEntity::class,
         PromptTemplateEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -79,6 +79,15 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE session ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE session ADD COLUMN draft TEXT")
+            }
+        }
+
+        /** V6 → V7：session 表新增标签与会话级模型覆盖；message 表新增收藏标记。 */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE session ADD COLUMN tags TEXT")
+                db.execSQL("ALTER TABLE session ADD COLUMN modelOverride TEXT")
+                db.execSQL("ALTER TABLE message ADD COLUMN starred INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 语音输入：本地离线识别需录音权限（运行时申请） -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 定时提醒：安卓 13+ 需通知权限 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 定时提醒：设置精确闹钟（安卓 12+ 需系统授权） -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:name=".AioShellApplication"
@@ -71,5 +75,14 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- 定时提醒广播接收器 -->
+        <receiver
+            android:name="com.aioshell.app.core.data.reminder.ReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.aioshell.app.action.REMINDER" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

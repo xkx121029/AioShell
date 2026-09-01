@@ -13,6 +13,7 @@ import com.aioshell.app.feature.config.ConfigListScreen
 import com.aioshell.app.feature.config.MiscAiScreen
 import com.aioshell.app.feature.session.AppearanceScreen
 import com.aioshell.app.feature.session.ArchivedScreen
+import com.aioshell.app.feature.session.RemindersScreen
 import com.aioshell.app.feature.session.SearchScreen
 import com.aioshell.app.feature.session.StatsScreen
 import com.aioshell.app.feature.session.SessionListScreen
@@ -30,6 +31,7 @@ object Routes {
     const val CONFIG_EDIT = "config/edit?configId={configId}"
     const val MISC_AI = "config/misc"
     const val ICONS = "icons"
+    const val REMINDERS = "reminders"
 
     fun chat(sessionId: String, highlightMessageId: String? = null) =
         "chat/$sessionId?highlight=${highlightMessageId.orEmpty()}"
@@ -62,7 +64,14 @@ fun AioAppNav() {
         }
 
         composable(Routes.STATS) {
-            StatsScreen(onBack = { navController.popBackStack() })
+            StatsScreen(
+                onBack = { navController.popBackStack() },
+                onGoReminders = { navController.navigate(Routes.REMINDERS) },
+            )
+        }
+
+        composable(Routes.REMINDERS) {
+            RemindersScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Routes.APPEARANCE) {

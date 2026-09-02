@@ -15,8 +15,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aioshell.app.core.data.model.ThemeMode
 import com.aioshell.app.core.ui.theme.AioShellTheme
+import com.aioshell.app.core.widget.WidgetIntentBroker
 import com.aioshell.app.nav.AioAppNav
 import com.aioshell.app.theme.ThemeViewModel
+import com.aioshell.app.widget.QuickActionWidget
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -24,11 +26,20 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // 桌面小部件「新建对话」动作：置位待消费标记，会话列表会自动创建
+        if (intent?.action == QuickActionWidget.ACTION_NEW_CHAT) {
+            WidgetIntentBroker.pendingNewChat.set(true)
+        }
+        // 若应用已处于前台（CLEAR_TOP 复用），重新拾取动作
+        if (intent?.action == QuickActionWidget.ACTION_OPEN) {
+            WidgetIntentBroker.pendingNewChat.set(false)
+        }
         setContent {
             val themeVm: ThemeViewModel = viewModel()
             val themeMode by themeVm.themeMode.collectAsStateWithLifecycle()
             val amoled by themeVm.amoledPureBlack.collectAsStateWithLifecycle()
             val accentHex by themeVm.accentHex.collectAsStateWithLifecycle()
+            val dynamicColor by themeVm.dynamicColorEnabled.collectAsStateWithLifecycle()
             val chatText by themeVm.chatText.collectAsStateWithLifecycle()
             val darkTheme = when (themeMode) {
                 ThemeMode.LIGHT -> false
@@ -39,10 +50,20 @@ class MainActivity : ComponentActivity() {
                 darkTheme = darkTheme,
                 amoled = amoled,
                 accent = parseAccent(accentHex),
+                dynamicColor = dynamicColor,
                 chatText = chatText ?: com.aioshell.app.core.ui.theme.ChatTextSettings(),
             ) {
                 AppLockGate()
             }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        // 再次唤起时刷新动作标记（例：应用已在后台，第二次点击小部件）
+        when (intent.action) {
+            QuickActionWidget.ACTION_NEW_CHAT -> WidgetIntentBroker.pendingNewChat.set(true)
+            QuickActionWidget.ACTION_OPEN -> WidgetIntentBroker.pendingNewChat.set(false)
         }
     }
 }

@@ -22,6 +22,8 @@ data class SessionEntity(
     val tags: String? = null,
     /** 会话级模型覆盖：非空时该会话使用指定模型名（结合当前档案），否则沿用档案模型。 */
     val modelOverride: String? = null,
+    /** 当前活动分支的叶子消息 id；null 表示默认（最新一条消息所在分支）。用于对话分支回溯。 */
+    val leafId: String? = null,
 )
 
 /** 消息实体。 */
@@ -40,6 +42,12 @@ data class MessageEntity(
     val reasoningDurationMs: Long? = null,
     /** 是否收藏（星标）：长按收藏重要消息，独立收藏页查看。 */
     val starred: Boolean = false,
+    /** 被引用消息的发起方角色（"user"/"assistant"，可空）。 */
+    val replyToRole: String? = null,
+    /** 被引用消息的正文快照（可空），用于渲染引用块与请求上下文。 */
+    val replyToContent: String? = null,
+    /** 父消息 id（分支指针）。null = 分支根消息；引用或多分支时从该字段回溯形成当前分支链。 */
+    val parentMessageId: String? = null,
 )
 
 /** 消息附件实体（本地图片引用）。 */
@@ -64,4 +72,31 @@ data class PromptTemplateEntity(
     val category: String,
     val builtIn: Boolean = false,
     val orderIndex: Int = 0,
+)
+
+/** 本地知识库文档（RAG）：一份导入的文本资料。 */
+@Entity(tableName = "knowledge_document")
+data class KnowledgeDocumentEntity(
+    @PrimaryKey val id: String,
+    /** 文档标题（默认取文件名）。 */
+    val title: String,
+    /** 源标识（文件名 / 文本名，仅展示）。 */
+    val sourceName: String,
+    /** 字符数。 */
+    val sizeChars: Int,
+    /** 切分出的块数。 */
+    val chunkCount: Int,
+    val createdAt: Long,
+)
+
+/** 知识库文档块：切分后的检索单元，对话时按相关性召回注入上下文。 */
+@Entity(
+    tableName = "knowledge_chunk",
+    indices = [androidx.room.Index("docId")],
+)
+data class KnowledgeChunkEntity(
+    @PrimaryKey val id: String,
+    val docId: String,
+    val text: String,
+    val orderIndex: Int,
 )

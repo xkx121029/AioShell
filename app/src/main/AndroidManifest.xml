@@ -84,5 +84,17 @@
                 <action android:name="com.aioshell.app.action.REMINDER" />
             </intent-filter>
         </receiver>
+
+        <!-- 桌面快捷小部件 -->
+        <receiver
+            android:name="com.aioshell.app.widget.QuickActionWidget"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/appwidget_info" />
+        </receiver>
     </application>
 </manifest>

@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AioShell</string>
+
+    <!-- 桌面快捷小部件 -->
+    <string name="widget_label">AioShell 快捷</string>
+    <string name="widget_title">AioShell</string>
+    <string name="widget_new_chat_label">新建对话</string>
+    <string name="widget_open_label">打开应用</string>
+    <string name="widget_description">从桌面快速新建对话或打开 AioShell</string>
 </resources>

@@ -86,6 +86,7 @@ import com.aioshell.app.core.ui.components.LoadingState
 import com.aioshell.app.core.ui.theme.AppRadius
 import com.aioshell.app.core.ui.theme.AppSpacing
 import com.aioshell.app.core.ui.theme.AppTheme
+import com.aioshell.app.core.widget.WidgetIntentBroker
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,6 +125,15 @@ fun SessionListScreen(
     LaunchedEffect(Unit) {
         viewModel.backupNotices.collect { notice ->
             Toast.makeText(contextForToast, notice.message, Toast.LENGTH_LONG).show()
+        }
+    }
+    // 桌面小部件「新建对话」：等待配置加载完成后消费待处理动作，自动创建一个新会话
+    LaunchedEffect(ui.hasConfig, ui.activeConfigId, ui.loading) {
+        if (ui.loading) return@LaunchedEffect
+        if (WidgetIntentBroker.consumeNewChat()) {
+            val cfgId = ui.activeConfigId
+            if (cfgId != null) viewModel.createAndGetId(cfgId, onOpenSession)
+            else onGoConfig()
         }
     }
     val c = AppTheme.colors

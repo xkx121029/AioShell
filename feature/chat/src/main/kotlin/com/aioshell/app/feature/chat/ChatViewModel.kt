@@ -21,9 +21,12 @@ import com.aioshell.app.core.data.network.ApiException
 import com.aioshell.app.core.data.network.ChatStreamEvent
 import com.aioshell.app.core.data.repository.ChatRepository
 import com.aioshell.app.core.data.repository.ConfigRepository
+import com.aioshell.app.core.data.repository.KnowledgeRepository
 import com.aioshell.app.core.data.repository.MessageRepository
 import com.aioshell.app.core.data.repository.MiscAiRepository
+import com.aioshell.app.core.data.repository.PersonaRepository
 import com.aioshell.app.core.data.repository.SessionRepository
+import com.aioshell.app.core.data.repository.WebSearchRepository
 import com.aioshell.app.core.data.store.SettingsStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -37,11 +40,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class UiImage(val id: String, val path: String)
+
+/** 一个可切换的分支（叶子消息）概要。 */
+data class BranchSummary(
+    val leafId: String,
+    val preview: String,
+    val createdAt: Long,
+    val isCurrent: Boolean,
+)
 
 data class ChatUiState(
     val sessionId: String = "",
@@ -58,6 +70,20 @@ data class ChatUiState(
     val speechText: String = "",
     val soundLevel: Float = 0f,
     val highlightMessageId: String? = null,
+    /** 待回复的引用目标：长按消息「引用」后设置，发送后清除。 */
+    val draftReply: ChatMessage? = null,
+    /** 联网搜索开关（来自设置）。 */
+    val webSearchEnabled: Boolean = false,
+    /** 是否正在检索联网内容（发送消息前短暂置真）。 */
+    val searching: Boolean = false,
+    /** 本地知识库（RAG）开关（来自设置）。 */
+    val knowledgeEnabled: Boolean = false,
+    /** 是否正在检索本地知识库。 */
+    val retrieving: Boolean = false,
+    /** 免提语音模式开关（来自设置）。 */
+    val handsFree: Boolean = false,
+    /** 可切换的分支叶子列表（对话分支回溯）。 */
+    val branchLeaves: List<BranchSummary> = emptyList(),
 )
 
 @HiltViewModel
@@ -67,6 +93,9 @@ class ChatViewModel @Inject constructor(
     private val configRepo: ConfigRepository,
     private val chatRepo: ChatRepository,
     private val miscAiRepo: MiscAiRepository,
+    private val personaRepo: PersonaRepository,
+    private val webSearchRepo: WebSearchRepository,
+    private val knowledgeRepo: KnowledgeRepository,
     private val modelManager: ModelManager,
     private val ttsManager: TtsManager,
     private val exporter: ConversationExporter,
@@ -90,12 +119,20 @@ class ChatViewModel @Inject constructor(
 
     private var streamingJob: Job? = null
     private var voiceJob: Job? = null
+    private var handsFreeJob: Job? = null
     private var draftJob: Job? = null
     private var speechAccumulated = ""
+
+    /** 当前活动分支的叶子消息 id（null = 默认线性链）。 */
+    private var activeLeafId: String? = null
+
+    /** 会话内全部消息（含其它分支），用于重新解析当前分支。 */
+    private var allMessages: List<ChatMessage> = emptyList()
 
     /** 上下文长度上限（用户+AI 历史条数，0 不限制）与自动朗读开关，来自设置。 */
     private var contextCount = 60
     private var autoTtsEnabled = false
+    private var handsFreeEnabled = false
 
     /** 语音模型下载 / 加载状态（来自 [ModelManager]）。 */
     val voiceModelState: StateFlow<VoiceModelState> = modelManager.state
@@ -106,9 +143,13 @@ class ChatViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             val session = sessionRepo.getById(sessionId)
-            session?.let { _state.value = _state.value.copy(title = it.title, draft = it.draft.orEmpty()) }
+            session?.let {
+                activeLeafId = it.leafId
+                _state.value = _state.value.copy(title = it.title, draft = it.draft.orEmpty())
+            }
             messageRepo.observeInSession(sessionId).collectLatest { msgs ->
-                _state.value = _state.value.copy(messages = msgs, loading = false)
+                allMessages = msgs
+                applyBranchResolution()
             }
         }
         viewModelScope.launch {
@@ -126,6 +167,33 @@ class ChatViewModel @Inject constructor(
         }
         viewModelScope.launch { settingsStore.contextMessageCount.collect { contextCount = it } }
         viewModelScope.launch { settingsStore.autoTts.collect { autoTtsEnabled = it } }
+        viewModelScope.launch {
+            settingsStore.webSearchEnabled.collect { enabled ->
+                _state.value = _state.value.copy(webSearchEnabled = enabled)
+            }
+        }
+        viewModelScope.launch {
+            settingsStore.knowledgeEnabled.collect { enabled ->
+                _state.value = _state.value.copy(knowledgeEnabled = enabled)
+            }
+        }
+        viewModelScope.launch {
+            settingsStore.handsFreeVoice.collect { enabled ->
+                handsFreeEnabled = enabled
+                _state.value = _state.value.copy(handsFree = enabled)
+            }
+        }
+    }
+
+    /** 按当前活动分支重算视图消息与分支列表。 */
+    private fun applyBranchResolution() {
+        val chain = resolveActiveChain(allMessages, activeLeafId)
+        val leaves = computeLeaves(allMessages, activeLeafId)
+        _state.value = _state.value.copy(
+            messages = chain,
+            loading = false,
+            branchLeaves = leaves,
+        )
     }
 
     /** 图片选择（Photo Picker 回调）：压缩到私有目录，存入待发送列表。 */
@@ -153,6 +221,11 @@ class ChatViewModel @Inject constructor(
         if (_state.value.isStreaming) return
         val cfg = activeConfig.value ?: return
 
+        // 引用目标：发送后清除
+        val reply = _state.value.draftReply
+        // 当前分支叶子：新消息作为其子节点（无则作为根）
+        val parentId = activeLeafId
+
         streamingJob?.cancel()
         streamingJob = viewModelScope.launch {
             _state.value = _state.value.copy(isStreaming = true)
@@ -163,13 +236,19 @@ class ChatViewModel @Inject constructor(
                 // 是否为会话首条消息（新建对话的第一条用户消息）
                 val isFirst = messageRepo.getInSession(sessionId).isEmpty()
                 val imagePaths = images.map { it.path }
-                _state.value = _state.value.copy(pendingImages = emptyList())
-                messageRepo.addUserMessage(sessionId, raw, attachmentPaths = imagePaths)
+                _state.value = _state.value.copy(pendingImages = emptyList(), draftReply = null)
+                messageRepo.addUserMessage(
+                    sessionId, raw, attachmentPaths = imagePaths,
+                    replyToRole = reply?.role, replyToContent = reply?.content,
+                    parentMessageId = parentId,
+                )
                 sessionRepo.touch(sessionId)
-                val assistant = messageRepo.addAssistantMessage(sessionId)
+                val assistant = messageRepo.addAssistantMessage(sessionId, parentMessageId = requireNotNull(messageRepo.getInSession(sessionId).lastOrNull()?.id))
+                // 新消息成为当前分支叶子
+                setActiveLeaf(assistant.id)
 
-                // 首条消息：用"杂项 AI"命名对话 + 分析意图，并把身份/风格建议注入主模型
-                val systemPrompt = if (isFirst) {
+                // 首条消息：用"杂项 AI"命名对话 + 分析意图；人格预设为基础 system，杂项 AI meta 叠加补充（均不落库）
+                val metaPrompt = if (isFirst) {
                     val meta = chatRepo.analyze(pickMiscAiConfig(effectiveCfg), raw, pickMiscAiPrompt())
                     val finalTitle = meta.title.ifBlank { localTitle(raw) }
                     if (finalTitle.isNotBlank() && finalTitle != "新对话") {
@@ -178,6 +257,29 @@ class ChatViewModel @Inject constructor(
                     }
                     buildSystemPrompt(meta)
                 } else null
+                // 联网搜索增强：开启时先检索真实内容，再注入 system 上下文（失败则静默降级）
+                var searchContext = ""
+                if (_state.value.webSearchEnabled && raw.isNotBlank()) {
+                    _state.value = _state.value.copy(searching = true)
+                    searchContext = runCatching { webSearchRepo.search(raw) }
+                        .getOrNull()?.context.orEmpty()
+                    _state.value = _state.value.copy(searching = false)
+                }
+                // 本地知识库（RAG）：开启时检索相关文档块，注入 system 上下文（失败则静默降级）
+                var knowledgeContext = ""
+                if (_state.value.knowledgeEnabled && raw.isNotBlank()) {
+                    _state.value = _state.value.copy(retrieving = true)
+                    knowledgeContext = runCatching { knowledgeRepo.retrieveContext(raw) }
+                        .getOrDefault("")
+                    _state.value = _state.value.copy(retrieving = false)
+                }
+                val personaPrompt = currentPersonaPrompt()
+                val systemPrompt = buildList {
+                    personaPrompt?.let { add(it) }
+                    metaPrompt?.let { add(it) }
+                    searchContext.takeIf { it.isNotBlank() }?.let { add(it) }
+                    knowledgeContext.takeIf { it.isNotBlank() }?.let { add(it) }
+                }.joinToString("\n").takeIf { it.isNotBlank() }
 
                 // 发送后清空输入草稿
                 if (_state.value.draft.isNotBlank()) {
@@ -185,7 +287,8 @@ class ChatViewModel @Inject constructor(
                     _state.value = _state.value.copy(draft = "")
                 }
 
-                val history = messageRepo.getInSession(sessionId).filterNot { it.id == assistant.id }
+                val history = resolveActiveChain(messageRepo.getInSession(sessionId), activeLeafId)
+                    .filterNot { it.id == assistant.id }
                 val imageBase64s = withContext(Dispatchers.IO) {
                     imagePaths.map { ImageProcessor.encodeToBase64(File(it)) }
                 }
@@ -210,7 +313,7 @@ class ChatViewModel @Inject constructor(
 
     private suspend fun pickMiscAiPrompt(): String = if (miscAiRepo.get().enabled) miscAiRepo.get().prompt else ""
 
-    /** 把杂项 AI 返回的元数据组织成主模型第一条请求的 system 握手信息。 */
+    /** 把杂项 AI 返回的元数据组织成 system 握手信息。 */
     private fun buildSystemPrompt(meta: MiscAiMeta): String? {
         val parts = buildList {
             if (meta.identity.isNotBlank()) add("你在此对话中的身份：${meta.identity}。")
@@ -218,6 +321,17 @@ class ChatViewModel @Inject constructor(
             if (meta.intent.isNotBlank()) add("用户本次对话的意图：${meta.intent}。")
         }
         return parts.joinToString("\n").takeIf { it.isNotBlank() }
+    }
+
+    /** 读取当前选中的人格预设，组织成基础 system 提示（无内容时返回 null）。 */
+    private suspend fun currentPersonaPrompt(): String? {
+        val p = runCatching { personaRepo.currentPersona.first() }.getOrNull() ?: return null
+        if (!p.hasContent) return null
+        return buildList {
+            if (p.identity.isNotBlank()) add(p.identity.trimEnd().removeSuffix("。") + "。")
+            if (p.style.isNotBlank()) add("回答风格：${p.style.trimEnd().removeSuffix("。")}。")
+            if (p.prompt.isNotBlank()) add(p.prompt.trim())
+        }.joinToString("\n")
     }
 
     /** 流式生成：思考内容与正文内容分流写入。 */
@@ -251,8 +365,8 @@ class ChatViewModel @Inject constructor(
             }
         }.onSuccess {
             messageRepo.markAssistantDone(assistant.id)
-            // AI 回复自动朗读：完成后若开启且内容非空，则用系统 TTS 朗读
-            if (autoTtsEnabled && acc.isNotBlank()) {
+            // 自动朗读：自动朗读开关或免提语音模式下朗读 AI 回复
+            if ((autoTtsEnabled || handsFreeEnabled) && acc.isNotBlank()) {
                 ttsManager.speak(acc.trim(), assistant.id)
             }
         }.onFailure { e ->
@@ -284,7 +398,7 @@ class ChatViewModel @Inject constructor(
                 if (history.isEmpty()) { messageRepo.delete(assistant.id); return@launch }
                 val session = sessionRepo.getById(sessionId)
                 val effectiveCfg = session?.modelOverride?.takeIf { it.isNotBlank() && it != cfg.model }?.let { cfg.copy(model = it) } ?: cfg
-                streamAssistant(effectiveCfg, assistant, history, emptyList(), null, contextCount)
+                streamAssistant(effectiveCfg, assistant, history, emptyList(), currentPersonaPrompt(), contextCount)
                 sessionRepo.touch(sessionId)
             } finally {
                 _state.value = _state.value.copy(isStreaming = false)
@@ -330,7 +444,7 @@ class ChatViewModel @Inject constructor(
                 _state.value = _state.value.copy(isStreaming = true)
                 streamingJob = viewModelScope.launch {
                     try {
-                        streamAssistant(effectiveCfg, assistant, history, emptyList(), null, contextCount)
+                        streamAssistant(effectiveCfg, assistant, history, emptyList(), currentPersonaPrompt(), contextCount)
                         sessionRepo.touch(sessionId)
                     } finally {
                         _state.value = _state.value.copy(isStreaming = false)
@@ -363,6 +477,73 @@ class ChatViewModel @Inject constructor(
         draftJob?.cancel()
         sessionRepo.saveDraft(sessionId, null)
         _state.value = _state.value.copy(draft = "")
+    }
+
+    /** 设置待回复的引用目标（长按消息「引用」触发）。 */
+    fun setReply(target: ChatMessage?) {
+        _state.value = _state.value.copy(draftReply = target)
+    }
+
+    /** 清除待回复的引用目标。 */
+    fun clearReply() = setReply(null)
+
+    /** 快捷 / 持久开关：修改联网搜索的全局启用状态。 */
+    fun toggleWebSearch() = viewModelScope.launch {
+        settingsStore.setWebSearchEnabled(!_state.value.webSearchEnabled)
+    }
+
+    /** 快捷 / 持久开关：修改本地知识库（RAG）的全局启用状态。 */
+    fun toggleKnowledge() = viewModelScope.launch {
+        settingsStore.setKnowledgeEnabled(!_state.value.knowledgeEnabled)
+    }
+
+    /** 免提语音模式开关：开启后识别完成自动发送，AI 回复自动朗读。 */
+    fun toggleHandsFree() = viewModelScope.launch {
+        val on = !_state.value.handsFree
+        handsFreeEnabled = on
+        settingsStore.setHandsFreeVoice(on)
+        _state.value = _state.value.copy(handsFree = on)
+        // 关闭时停止正在进行的语音监听
+        if (!on) {
+            voiceJob?.cancel()
+            voiceJob = null
+            _state.value = _state.value.copy(isListening = false, speechText = "")
+            speechAccumulated = ""
+        }
+    }
+
+    /** 在指定消息处派生新分支（新消息以 [fromMessageId] 为父节点继续）。 */
+    fun startBranch(fromMessageId: String) {
+        if (fromMessageId.isBlank()) return
+        viewModelScope.launch {
+            activeLeafId = fromMessageId
+            sessionRepo.setBranchLeaf(sessionId, fromMessageId)
+            applyBranchResolution()
+        }
+    }
+
+    /** 切换到指定分支（[leafId] 为该分支的叶子消息）。 */
+    fun switchBranch(leafId: String) {
+        if (leafId.isBlank()) return
+        viewModelScope.launch {
+            activeLeafId = leafId
+            sessionRepo.setBranchLeaf(sessionId, leafId)
+            applyBranchResolution()
+        }
+    }
+
+    /** 恢复默认线性视图（等价于切换到最新分支，或清空 leafId 后重解析）。 */
+    fun resetBranch() {
+        viewModelScope.launch {
+            activeLeafId = allMessages.maxByOrNull { it.createdAt }?.id
+            sessionRepo.setBranchLeaf(sessionId, activeLeafId)
+            applyBranchResolution()
+        }
+    }
+
+    private suspend fun setActiveLeaf(leaf: String) {
+        activeLeafId = leaf
+        sessionRepo.setBranchLeaf(sessionId, leaf)
     }
 
     /** 朗读/停止朗读某条消息（仅对 AI 与错误消息开放）。 */
@@ -419,6 +600,14 @@ class ChatViewModel @Inject constructor(
                         _state.value = _state.value.copy(soundLevel = r.volume)
                         if (r.finalized) {
                             speechAccumulated += r.text
+                            // 免提语音：识别完成后自动发送，回复由流式结束自动朗读
+                            if (handsFreeEnabled && speechAccumulated.isNotBlank()) {
+                                val text = speechAccumulated
+                                speechAccumulated = ""
+                                _state.value = _state.value.copy(speechText = "", isListening = false)
+                                send(text)
+                                return@collect
+                            }
                             _state.value = _state.value.copy(speechText = speechAccumulated)
                         } else if (r.text.isNotEmpty()) {
                             _state.value = _state.value.copy(speechText = r.text)
@@ -440,6 +629,47 @@ class ChatViewModel @Inject constructor(
     }
 
     private companion object { const val MAX_IMAGES = 4 }
+}
+
+/**
+ * 从 [all] 中解析出当前活动分支链：从 [leafId] 沿父指针回溯到根，再按时间升序返回。
+ * leafId 为 null 或找不到时，回退为按时间升序的全部消息（默认线性，兼容升级前数据）。
+ */
+private fun resolveActiveChain(all: List<ChatMessage>, leafId: String?): List<ChatMessage> {
+    if (all.isEmpty()) return all
+    val map = all.associateBy { it.id }
+    if (leafId.isNullOrBlank() || map[leafId] == null) {
+        // 未分支：线性返回（如旧数据 parentId 全空）
+        return all.sortedBy { it.createdAt }
+    }
+    val chain = ArrayList<ChatMessage>()
+    var cur: String? = leafId
+    val guard = HashSet<String>()
+    while (cur != null && guard.add(cur)) {
+        val msg = map[cur] ?: break
+        chain.add(msg)
+        cur = msg.parentMessageId
+    }
+    return chain.sortedBy { it.createdAt }
+}
+
+/** 枚举会话内所有分支叶子（没有子消息的消息），用于分支切换面板。 */
+private fun computeLeaves(all: List<ChatMessage>, activeLeafId: String?): List<BranchSummary> {
+    if (all.isEmpty()) return emptyList()
+    val children = all.mapNotNull { it.parentMessageId }.toHashSet()
+    val leaves = all
+        .filter { it.id !in children }
+        .sortedByDescending { it.createdAt }
+    val activeId = activeLeafId
+    return leaves.map { leaf ->
+        BranchSummary(
+            leafId = leaf.id,
+            preview = leaf.content.lineSequence().firstOrNull { it.isNotBlank() }
+                ?.take(30) ?: (if (leaf.role == MessageRole.USER) "[图像]" else "[空回复]"),
+            createdAt = leaf.createdAt,
+            isCurrent = leaf.id == activeId,
+        )
+    }
 }
 
 /**

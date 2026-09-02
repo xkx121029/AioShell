@@ -14,8 +14,8 @@ android {
         applicationId = "com.aioshell.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.8.0"
+        versionCode = 12
+        versionName = "1.10.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -51,6 +51,7 @@ dependencies {
     implementation(project(":core:ui"))
     implementation(project(":feature:config"))
     implementation(project(":feature:chat"))
+    implementation(project(":feature:persona"))
     implementation(project(":feature:session"))
 
     implementation(libs.androidx.core.ktx)

@@ -5,6 +5,7 @@ import com.aioshell.app.core.data.database.AppDatabase
 import com.aioshell.app.core.data.database.MessageEntity
 import com.aioshell.app.core.data.database.SessionEntity
 import com.aioshell.app.core.data.model.ChatMessage
+import com.aioshell.app.core.data.model.MessageRole
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -83,6 +84,9 @@ class SessionRepository @Inject constructor(private val db: AppDatabase) {
 
     /** 保存 / 清空输入草稿。 */
     suspend fun saveDraft(id: String, draft: String?) = dao.setDraft(id, draft)
+
+    /** 设置当前活动分支的叶子消息 id（null 表示恢复默认线性视图）。 */
+    suspend fun setBranchLeaf(id: String, leafId: String?) = dao.setLeaf(id, leafId)
 
     suspend fun delete(id: String) {
         db.withTransaction {
@@ -247,8 +251,15 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
         dao.updateContent(id, content)
     }
 
-    suspend fun addUserMessage(sessionId: String, content: String, attachmentPaths: List<String> = emptyList()): ChatMessage {
-        val msg = insert(sessionId, "user", content)
+    suspend fun addUserMessage(
+        sessionId: String,
+        content: String,
+        attachmentPaths: List<String> = emptyList(),
+        replyToRole: MessageRole? = null,
+        replyToContent: String? = null,
+        parentMessageId: String? = null,
+    ): ChatMessage {
+        val msg = insert(sessionId, "user", content, replyToRole, replyToContent, parentMessageId)
         if (attachmentPaths.isNotEmpty()) {
             attachmentDao.insertAll(
                 attachmentPaths.mapIndexed { idx, path ->
@@ -265,8 +276,8 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
         return msg
     }
 
-    suspend fun addAssistantMessage(sessionId: String, initial: String = ""): ChatMessage =
-        insert(sessionId, "assistant", initial)
+    suspend fun addAssistantMessage(sessionId: String, initial: String = "", parentMessageId: String? = null): ChatMessage =
+        insert(sessionId, "assistant", initial, null, null, parentMessageId)
 
     suspend fun updateAssistantText(id: String, content: String) {
         val existing = dao.getById(id) ?: return
@@ -293,7 +304,14 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
         attachmentDao.deleteByMessage(id)
     }
 
-    private suspend fun insert(sessionId: String, role: String, content: String): ChatMessage {
+    private suspend fun insert(
+        sessionId: String,
+        role: String,
+        content: String,
+        replyToRole: MessageRole? = null,
+        replyToContent: String? = null,
+        parentMessageId: String? = null,
+    ): ChatMessage {
         val entity = com.aioshell.app.core.data.database.MessageEntity(
             id = UUID.randomUUID().toString(),
             sessionId = sessionId,
@@ -301,6 +319,9 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
             content = content,
             createdAt = System.currentTimeMillis(),
             status = if (role == "user") "DONE" else "SENDING",
+            replyToRole = replyToRole?.name,
+            replyToContent = replyToContent,
+            parentMessageId = parentMessageId,
         )
         dao.insert(entity)
         return entity.toDomain()
@@ -311,12 +332,17 @@ class MessageRepository @Inject constructor(private val db: AppDatabase) {
             .getOrDefault(com.aioshell.app.core.data.model.MessageRole.ASSISTANT)
         val s = runCatching { com.aioshell.app.core.data.model.MessageStatus.valueOf(status) }
             .getOrDefault(com.aioshell.app.core.data.model.MessageStatus.DONE)
+        val rr = replyToRole?.let {
+            runCatching { com.aioshell.app.core.data.model.MessageRole.valueOf(it) }.getOrNull()
+        }
         val attachments = attachmentDao.getForMessages(listOf(id))
             .map { com.aioshell.app.core.data.model.MessageAttachment(it.id, it.localPath, it.mimeType, it.orderIndex) }
         return ChatMessage(
             id = id, sessionId = sessionId, role = r, content = content, createdAt = createdAt,
             status = s, reasoningContent = reasoning, reasoningDurationMs = reasoningDurationMs,
             attachments = attachments, starred = starred,
+            replyToRole = rr, replyToContent = replyToContent,
+            parentMessageId = parentMessageId,
         )
     }
 }

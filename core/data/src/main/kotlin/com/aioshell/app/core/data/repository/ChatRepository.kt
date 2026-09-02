@@ -56,11 +56,17 @@ class ChatRepository @Inject constructor(private val apiClient: ApiClient) {
             body += RequestMessage("system", JsonPrimitive(systemPrompt))
         }
         kept.mapIndexedTo(body) { index, m ->
+            // 若本条带引用（针对上一条消息的回复），把被引用内容作为上下文前缀一并发给模型
+            val replyPrefix = m.replyToContent?.takeIf { it.isNotBlank() }?.let { quoted ->
+                val who = if (m.replyToRole == MessageRole.USER) "用户" else "AI"
+                "【引用自$who】$quoted\n\n"
+            }.orEmpty()
+            val baseText = replyPrefix + m.content
             val isLastUser = m.role == MessageRole.USER && index == kept.lastIndex && imageBase64s.isNotEmpty()
             val content = if (isLastUser) {
-                MultimodalContentBuilder.buildUserContent(m.content, imageBase64s)
+                MultimodalContentBuilder.buildUserContent(baseText, imageBase64s)
             } else {
-                JsonPrimitive(m.content)
+                JsonPrimitive(baseText)
             }
             RequestMessage(m.roleToApi()!!, content)
         }

@@ -12,10 +12,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 @HiltViewModel
 class ThemeViewModel @Inject constructor(
-    settings: SettingsStore,
+    private val settings: SettingsStore,
 ) : ViewModel() {
 
     val themeMode: StateFlow<ThemeMode> = settings.themeMode
@@ -28,6 +29,15 @@ class ThemeViewModel @Inject constructor(
     /** 自定义强调色（十六进制字符串）。 */
     val accentHex: StateFlow<String?> = settings.accentColor
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Material You 动态取色开关（跟随系统壁纸）。 */
+    val dynamicColorEnabled: StateFlow<Boolean> = settings.dynamicColorEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** 切换动态取色。 */
+    fun setDynamicColor(enabled: Boolean) {
+        viewModelScope.launch { settings.setDynamicColorEnabled(enabled) }
+    }
 
     /** 聊天排版参数（字号 + 行距）。 */
     val chatText: StateFlow<ChatTextSettings?> = combine(

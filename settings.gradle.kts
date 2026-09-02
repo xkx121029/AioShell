@@ -29,7 +29,8 @@ include(":core:data")
 // 共享 UI：主题 / 通用组件
 include(":core:ui")
 
-// 功能模块：接口配置 / 会话 / 对话
+// 功能模块：接口配置 / 会话 / 对话 / 人格预设
 include(":feature:config")
 include(":feature:chat")
+include(":feature:persona")
 include(":feature:session")

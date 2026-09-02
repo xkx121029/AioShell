@@ -62,9 +62,11 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Reply
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -119,6 +121,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -520,6 +523,11 @@ fun ChatScreen(
                 onInsertMarkdown = { action -> input = applyMarkdown(input, action) },
                 onPickImage = ::launchPhotoPicker,
                 onVoiceToggle = ::startVoice,
+                reply = ui.draftReply,
+                onClearReply = { viewModel.clearReply() },
+                webSearchEnabled = ui.webSearchEnabled,
+                searching = ui.searching,
+                onToggleWebSearch = viewModel::toggleWebSearch,
                 onSend = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.send(input.text)
@@ -539,6 +547,11 @@ fun ChatScreen(
         MessageActionMenu(
             message = msg,
             isSpeaking = isSpeaking,
+            onReply = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                viewModel.setReply(msg)
+                actionTarget = null
+            },
             onCopyMarkdown = {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 context.copyTextToClipboard("消息", msg.content)
@@ -617,6 +630,43 @@ private fun NoConfigBanner(onGoConfig: () -> Unit) {
     }
 }
 
+/** 引用目标提示条：长按消息「引用」后显示在输入框上方，点击 ✕ 清除。 */
+@Composable
+private fun QuoteBar(
+    reply: ChatMessage,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = AppTheme.colors
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(AppRadius.md))
+            .background(c.surface, RoundedCornerShape(AppRadius.md))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.Reply,
+            contentDescription = "引用回复",
+            tint = c.secondary,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = reply.content.replace("\n", " ").take(50) +
+                if (reply.content.length > 50) "…" else "",
+            style = MaterialTheme.typography.bodySmall,
+            color = c.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+            Icon(Icons.Filled.Close, contentDescription = "清除引用", tint = c.secondary, modifier = Modifier.size(16.dp))
+        }
+    }
+}
+
 @Composable
 private fun InputBar(
     value: TextFieldValue,
@@ -631,6 +681,11 @@ private fun InputBar(
     onVoiceToggle: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    reply: ChatMessage?,
+    onClearReply: () -> Unit,
+    webSearchEnabled: Boolean,
+    searching: Boolean,
+    onToggleWebSearch: () -> Unit,
 ) {
     val c = AppTheme.colors
     Surface(
@@ -649,6 +704,52 @@ private fun InputBar(
                     },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.md, vertical = 4.dp),
                 )
+            }
+            // 引用目标提示条：长按消息「引用」后显示，点击 ✕ 清除
+            if (reply != null && reply.content.isNotBlank()) {
+                QuoteBar(reply, onDismiss = onClearReply,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.md, vertical = 4.dp))
+            }
+            // 联网搜索增强：轻量开关芯片，点击切换；发送时短暂显示"联网检索中…"
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = AppSpacing.md, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(AppRadius.md))
+                        .background(
+                            if (webSearchEnabled) c.primary.copy(alpha = 0.16f)
+                            else c.secondary.copy(alpha = 0.08f)
+                        )
+                        .clickable(onClick = onToggleWebSearch)
+                        .padding(horizontal = AppSpacing.md, vertical = 5.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.Public,
+                            contentDescription = "联网搜索",
+                            tint = if (webSearchEnabled) c.primary else c.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (webSearchEnabled) "联网搜索 · 已开启" else "联网搜索",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (webSearchEnabled) c.primary else c.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (searching) {
+                    Text(
+                        "联网检索中…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = c.secondary,
+                    )
+                }
             }
             Row(
                 verticalAlignment = Alignment.Bottom,
@@ -890,6 +991,7 @@ private fun ImageViewerDialog(path: String, onDismiss: () -> Unit) {
 private fun MessageActionMenu(
     message: ChatMessage,
     isSpeaking: Boolean,
+    onReply: () -> Unit,
     onCopyMarkdown: () -> Unit,
     onCopyPlain: () -> Unit,
     onSpeak: () -> Unit,
@@ -912,6 +1014,9 @@ private fun MessageActionMenu(
                     .padding(vertical = AppSpacing.sm),
             ) {
                 ActionItem(Icons.Filled.ContentCopy, "复制为 Markdown", onCopyMarkdown)
+                if (message.content.isNotBlank()) {
+                    ActionItem(Icons.Filled.Reply, "引用回复", onReply)
+                }
                 if (message.content.isNotBlank()) {
                     ActionItem(Icons.Filled.Description, "复制为纯文本", onCopyPlain)
                 }

@@ -66,6 +66,7 @@ data class AppearanceUi(
     val tokenInputPrice: Float = 0f,
     val tokenOutputPrice: Float = 0f,
     val lockEnabled: Boolean = false,
+    val dynamicColor: Boolean = false,
 )
 
 /** 预设强调色（十六进制），覆盖深浅两种主题下都能辨识的常见主色。 */
@@ -87,8 +88,9 @@ class AppearanceViewModel @Inject constructor(
             settings.accentColor,
             settings.chatFontSize,
             settings.chatLineSpacing,
-        ) { accent, size, spacing ->
-            AppearanceUi(accent = accent, fontSize = size, lineSpacing = spacing)
+            settings.dynamicColorEnabled,
+        ) { accent, size, spacing, dynamic ->
+            AppearanceUi(accent = accent, fontSize = size, lineSpacing = spacing, dynamicColor = dynamic)
         },
         combine(
             settings.tokenInputPrice,
@@ -102,6 +104,7 @@ class AppearanceViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppearanceUi())
 
     fun setAccent(hex: String?) = viewModelScope.launch { settings.setAccentColor(hex) }
+    fun setDynamicColor(enabled: Boolean) = viewModelScope.launch { settings.setDynamicColorEnabled(enabled) }
     fun setFontSize(sp: Float) = viewModelScope.launch { settings.setChatFontSize(sp) }
     fun setLineSpacing(sp: Float) = viewModelScope.launch { settings.setChatLineSpacing(sp) }
     fun setTokenInputPrice(v: Float) = viewModelScope.launch { settings.setTokenInputPrice(v) }
@@ -209,6 +212,27 @@ fun AppearanceScreen(
                     color = c.onSurfaceVariant,
                     modifier = Modifier.padding(top = AppSpacing.md),
                 )
+            }
+
+            Section("动态取色（Material You）")
+            SelectionBox {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("跟随系统壁纸主题", style = MaterialTheme.typography.bodyMedium, color = c.onSurface)
+                        Text(
+                            "开启后由系统根据壁纸提取主色，忽略上方手动强调色",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = c.onSurfaceVariant,
+                        )
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = ui.dynamicColor,
+                        onCheckedChange = { on ->
+                            viewModel.setDynamicColor(on)
+                            if (on) viewModel.setAccent(null)
+                        },
+                    )
+                }
             }
 
             Section("聊天字号")

@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 /** 导出格式。 */
 enum class ExportFormat(val label: String, val extension: String) {
     MARKDOWN("Markdown", "md"),
+    HTML("HTML 网页", "html"),
     TEXT("纯文本", "txt"),
     JSON("JSON", "json"),
 }
@@ -51,6 +52,7 @@ class ConversationExporter @Inject constructor(
 
         val body = when (format) {
             ExportFormat.MARKDOWN -> toMarkdown(session.title, messages)
+            ExportFormat.HTML -> toHtml(session.title, messages)
             ExportFormat.TEXT -> toPlainText(session.title, messages)
             ExportFormat.JSON -> toJson(session.title, messages)
         }
@@ -75,6 +77,7 @@ class ConversationExporter @Inject constructor(
                 ExportFormat.MARKDOWN -> sessions.joinToString("\n") { (s, msgs) ->
                     "---\n\n" + toMarkdown(s.title, msgs)
                 }
+                ExportFormat.HTML -> toHtmlMultiple(sessions.map { (s, msgs) -> s.title to msgs })
                 ExportFormat.TEXT -> sessions.joinToString("\n\n") { (s, msgs) ->
                     toPlainText(s.title, msgs)
                 }
@@ -97,6 +100,7 @@ class ConversationExporter @Inject constructor(
         val share = Intent(Intent.ACTION_SEND).apply {
             type = when (format) {
                 ExportFormat.MARKDOWN -> "text/markdown"
+                ExportFormat.HTML -> "text/html"
                 ExportFormat.TEXT -> "text/plain"
                 ExportFormat.JSON -> "application/json"
             }
@@ -373,6 +377,65 @@ class ConversationExporter @Inject constructor(
             append("}\n")
         }
 
+    /** 生成一份离线可自包含的单会话 HTML 对话记录。 */
+    private fun toHtml(title: String, messages: List<ChatMessage>): String =
+        buildString {
+            append(HTML_HEAD)
+            append("<h1>").append(htmlEscape(title)).append("</h1>\n")
+            append("<p class=\"meta\">由 AioShell 导出 · ").append(formatTime(System.currentTimeMillis())).append("</p>\n")
+            messages.forEach { m ->
+                val mine = m.role == MessageRole.USER
+                append("<div class=\"bubble ").append(if (mine) "mine" else "theirs").append("\">\n")
+                append("<div class=\"meta\">").append(htmlEscape(roleLabel(m.role))).append(" · ")
+                    .append(formatTime(m.createdAt)).append("</div>\n")
+                m.reasoningContent?.takeIf { it.isNotBlank() }?.let {
+                    append("<div class=\"reasoning\">💭 思考过程<br/>").append(htmlEscape(it).replace("\n", "<br/>")).append("</div>\n")
+                }
+                append("<div class=\"content\">").append(htmlEscape(m.content).replace("\n", "<br/>")).append("</div>\n")
+                append("</div>\n")
+            }
+            append("</body>\n</html>\n")
+        }
+
+    /** 生成多会话聚合的 HTML 对话记录。 */
+    private fun toHtmlMultiple(sessions: List<Pair<String, List<ChatMessage>>>): String =
+        buildString {
+            append(HTML_HEAD)
+            sessions.forEach { (title, messages) ->
+                append("<h1>").append(htmlEscape(title)).append("</h1>\n")
+                append("<p class=\"meta\">由 AioShell 导出 · ").append(formatTime(System.currentTimeMillis())).append("</p>\n")
+                messages.forEach { m ->
+                    val mine = m.role == MessageRole.USER
+                    append("<div class=\"bubble ").append(if (mine) "mine" else "theirs").append("\">\n")
+                    append("<div class=\"meta\">").append(htmlEscape(roleLabel(m.role))).append(" · ")
+                        .append(formatTime(m.createdAt)).append("</div>\n")
+                    m.reasoningContent?.takeIf { it.isNotBlank() }?.let {
+                        append("<div class=\"reasoning\">💭 思考过程<br/>").append(htmlEscape(it).replace("\n", "<br/>")).append("</div>\n")
+                    }
+                    append("<div class=\"content\">").append(htmlEscape(m.content).replace("\n", "<br/>")).append("</div>\n")
+                    append("</div>\n")
+                }
+                append("<hr/>\n")
+            }
+            append("</body>\n</html>\n")
+        }
+
+    /** 转义 HTML 文本。 */
+    private fun htmlEscape(raw: String): String = buildString {
+        for (ch in raw) {
+            append(
+                when (ch) {
+                    '&' -> "&amp;"
+                    '<' -> "&lt;"
+                    '>' -> "&gt;"
+                    '"' -> "&quot;"
+                    '\'' -> "&#39;"
+                    else -> ch
+                }
+            )
+        }
+    }
+
     /** 批量导出 JSON：多个会话聚合为一个根节点。 */
     private fun toJsonMultiple(sessions: List<Pair<String, List<ChatMessage>>>): String =
         buildString {
@@ -422,5 +485,28 @@ class ConversationExporter @Inject constructor(
         }
         sb.append("\"")
         return sb.toString()
+    }
+
+    private companion object {
+        /** 自包含离线 HTML 的 <head>（内联样式，无外部依赖）。 */
+        const val HTML_HEAD =
+            "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"utf-8\"/>\n" +
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n" +
+            "<title>AioShell 对话导出</title>\n<style>\n" +
+            "body{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;" +
+            "max-width:760px;margin:0 auto;padding:24px 16px 64px;background:#f7f8fa;color:#1c1c1e}\n" +
+            "h1{color:#0b6b60;font-size:24px}\n" +
+            ".meta{color:#8a8a8e;font-size:12px;margin:4px 0 12px}\n" +
+            ".bubble{border-radius:12px;padding:10px 14px;margin:10px 0;max-width:82%;" +
+            "box-shadow:0 1px 2px rgba(0,0,0,.06)}\n" +
+            ".bubble .meta{font-size:11px}\n" +
+            ".bubble .content{white-space:pre-wrap;word-break:break-word;font-size:15px;line-height:1.6}\n" +
+            ".theirs{background:#ffffff;margin-right:auto}\n" +
+            ".mine{background:#0b6b60;color:#ffffff;margin-left:auto}\n" +
+            ".mine .meta{color:rgba(255,255,255,.75)}\n" +
+            ".reasoning{background:rgba(11,107,96,.08);border-radius:8px;padding:8px 10px;margin:6px 0;" +
+            "font-size:13px;color:#5a6666;font-style:italic}\n" +
+            "hr{border:none;border-top:1px solid #e2e4e8;margin:24px 0}\n" +
+            "</style>\n</head>\n<body>\n"
     }
 }

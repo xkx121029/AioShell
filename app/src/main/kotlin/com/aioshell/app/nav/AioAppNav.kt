@@ -11,6 +11,7 @@ import com.aioshell.app.feature.chat.TemplatesScreen
 import com.aioshell.app.feature.config.ConfigEditScreen
 import com.aioshell.app.feature.config.ConfigListScreen
 import com.aioshell.app.feature.config.MiscAiScreen
+import com.aioshell.app.feature.persona.PersonaScreen
 import com.aioshell.app.feature.session.AppearanceScreen
 import com.aioshell.app.feature.session.ArchivedScreen
 import com.aioshell.app.feature.session.RemindersScreen
@@ -30,6 +31,7 @@ object Routes {
     const val CONFIGS = "configs"
     const val CONFIG_EDIT = "config/edit?configId={configId}"
     const val MISC_AI = "config/misc"
+    const val PERSONA = "config/persona"
     const val ICONS = "icons"
     const val REMINDERS = "reminders"
 
@@ -118,11 +120,16 @@ fun AioAppNav() {
                 onAdd = { navController.navigate(Routes.configEdit(null)) },
                 onEdit = { navController.navigate(Routes.configEdit(it)) },
                 onMiscAi = { navController.navigate(Routes.MISC_AI) },
+                onPersona = { navController.navigate(Routes.PERSONA) },
             )
         }
 
         composable(Routes.MISC_AI) {
             MiscAiScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.PERSONA) {
+            PersonaScreen(onBack = { navController.popBackStack() })
         }
 
         composable(

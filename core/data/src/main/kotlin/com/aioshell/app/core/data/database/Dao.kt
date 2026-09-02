@@ -64,6 +64,9 @@ interface SessionDao {
     @Query("UPDATE session SET modelOverride = :modelOverride WHERE id = :id")
     suspend fun setModelOverride(id: String, modelOverride: String?)
 
+    @Query("UPDATE session SET leafId = :leafId WHERE id = :id")
+    suspend fun setLeaf(id: String, leafId: String?)
+
     @Delete
     suspend fun delete(entity: SessionEntity)
 
@@ -136,6 +139,40 @@ interface MessageDao {
 
     @Query("SELECT COUNT(*) FROM message WHERE role = :role")
     suspend fun countByRole(role: String): Long
+}
+
+/** 本地知识库（RAG）DAO：文档与其分块的新增 / 查询 / 删除。 */
+@Dao
+interface KnowledgeDao {
+    @Query("SELECT * FROM knowledge_document ORDER BY createdAt DESC")
+    fun observeDocuments(): Flow<List<KnowledgeDocumentEntity>>
+
+    @Query("SELECT * FROM knowledge_document ORDER BY createdAt DESC")
+    suspend fun getAllDocuments(): List<KnowledgeDocumentEntity>
+
+    @Query("SELECT COUNT(*) FROM knowledge_document")
+    suspend fun countDocuments(): Long
+
+    @Insert
+    suspend fun insertDocument(doc: KnowledgeDocumentEntity)
+
+    @Query("DELETE FROM knowledge_document WHERE id = :id")
+    suspend fun deleteDocumentById(id: String)
+
+    @Query("SELECT * FROM knowledge_chunk WHERE docId = :docId ORDER BY orderIndex ASC")
+    suspend fun getChunksForDoc(docId: String): List<KnowledgeChunkEntity>
+
+    @Query("SELECT * FROM knowledge_chunk ORDER BY docId ASC, orderIndex ASC")
+    suspend fun getAllChunks(): List<KnowledgeChunkEntity>
+
+    @Insert
+    suspend fun insertChunks(chunks: List<KnowledgeChunkEntity>)
+
+    @Query("DELETE FROM knowledge_chunk WHERE docId = :docId")
+    suspend fun deleteChunksByDoc(docId: String)
+
+    @Query("SELECT COUNT(*) FROM knowledge_chunk")
+    suspend fun countChunks(): Long
 }
 
 @Dao

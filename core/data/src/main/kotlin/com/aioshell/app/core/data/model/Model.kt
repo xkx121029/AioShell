@@ -65,4 +65,10 @@ data class ChatMessage(
     val attachments: List<MessageAttachment> = emptyList(),
     /** 是否收藏（星标）。 */
     val starred: Boolean = false,
+    /** 被引用消息的发起方角色（无引用则为 null）。 */
+    val replyToRole: MessageRole? = null,
+    /** 被引用消息正文快照（无引用则为 null）。 */
+    val replyToContent: String? = null,
+    /** 父消息 id（分支指针）；null 表示分支根 / 默认线性链。 */
+    val parentMessageId: String? = null,
 )

@@ -22,6 +22,7 @@ class SettingsStore @Inject constructor(@ApplicationContext private val context:
 
     private companion object {
         val KEY_THEME = stringPreferencesKey("theme_mode")
+        val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val KEY_MISC_AI = stringPreferencesKey("misc_ai")
         val KEY_AMOLED = booleanPreferencesKey("amoled_pure_black")
         val KEY_ACCENT = stringPreferencesKey("accent_color")
@@ -34,6 +35,11 @@ class SettingsStore @Inject constructor(@ApplicationContext private val context:
         val KEY_LOCK_ENABLED = booleanPreferencesKey("lock_enabled")
         val KEY_LOCK_PIN = stringPreferencesKey("lock_pin_hash")
         val KEY_REMINDERS = stringPreferencesKey("reminders")
+        val KEY_PERSONAS = stringPreferencesKey("personas")
+        val KEY_CURRENT_PERSONA = stringPreferencesKey("current_persona_id")
+        val KEY_WEB_SEARCH = booleanPreferencesKey("web_search_enabled")
+        val KEY_KNOWLEDGE = booleanPreferencesKey("knowledge_enabled")
+        val KEY_HANDS_FREE = booleanPreferencesKey("hands_free_voice")
     }
 
     /** 自定义强调色（十六进制，如 "#0B6B60"）；null 表示跟随默认主题色。 */
@@ -66,6 +72,14 @@ class SettingsStore @Inject constructor(@ApplicationContext private val context:
 
     suspend fun setThemeMode(mode: ThemeMode) {
         context.settingsDataStore.edit { it[KEY_THEME] = mode.name }
+    }
+
+    /** 动态取色（Material You）：开启后跟随系统壁纸生成主色。 */
+    val dynamicColorEnabled: Flow<Boolean> =
+        context.settingsDataStore.data.map { it[KEY_DYNAMIC_COLOR] ?: false }
+
+    suspend fun setDynamicColorEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[KEY_DYNAMIC_COLOR] = enabled }
     }
 
     /** AMOLED 纯黑模式：深色背景下背景/表面切换为纯黑，适配 OLED 屏。 */
@@ -134,5 +148,48 @@ class SettingsStore @Inject constructor(@ApplicationContext private val context:
         context.settingsDataStore.edit {
             if (json == null) it.remove(KEY_REMINDERS) else it[KEY_REMINDERS] = json
         }
+    }
+
+    /** 人格预设列表（序列化 JSON）。空表示尚未保存（回退内置预设）。 */
+    val personasRaw: Flow<String?> = context.settingsDataStore.data.map { it[KEY_PERSONAS] }
+
+    suspend fun savePersonas(json: String?) {
+        context.settingsDataStore.edit {
+            if (json == null) it.remove(KEY_PERSONAS) else it[KEY_PERSONAS] = json
+        }
+    }
+
+    /** 当前选中的人格预设 id；空表示"默认（不注入人格）"。 */
+    val currentPersonaId: Flow<String> =
+        context.settingsDataStore.data.map { it[KEY_CURRENT_PERSONA] ?: "" }
+
+    suspend fun setCurrentPersona(id: String) {
+        context.settingsDataStore.edit {
+            if (id.isBlank()) it.remove(KEY_CURRENT_PERSONA) else it[KEY_CURRENT_PERSONA] = id
+        }
+    }
+
+    /** 联网搜索开关：开启后发送消息时先检索真实内容再交给模型。 */
+    val webSearchEnabled: Flow<Boolean> =
+        context.settingsDataStore.data.map { it[KEY_WEB_SEARCH] ?: false }
+
+    suspend fun setWebSearchEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[KEY_WEB_SEARCH] = enabled }
+    }
+
+    /** 本地知识库（RAG）开关：开启后发送消息前先检索本地资料再交给模型。 */
+    val knowledgeEnabled: Flow<Boolean> =
+        context.settingsDataStore.data.map { it[KEY_KNOWLEDGE] ?: false }
+
+    suspend fun setKnowledgeEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[KEY_KNOWLEDGE] = enabled }
+    }
+
+    /** 免提语音模式开关：持续监听，识别完成后自动发送，AI 回复自动朗读。 */
+    val handsFreeVoice: Flow<Boolean> =
+        context.settingsDataStore.data.map { it[KEY_HANDS_FREE] ?: false }
+
+    suspend fun setHandsFreeVoice(enabled: Boolean) {
+        context.settingsDataStore.edit { it[KEY_HANDS_FREE] = enabled }
     }
 }

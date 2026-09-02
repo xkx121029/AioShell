@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +54,7 @@ fun ConfigListScreen(
     onAdd: () -> Unit,
     onEdit: (String) -> Unit,
     onMiscAi: () -> Unit,
+    onPersona: () -> Unit,
     viewModel: ConfigListViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -67,6 +69,9 @@ fun ConfigListScreen(
                     IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回") }
                 },
                 actions = {
+                    IconButton(onClick = onPersona) {
+                        Icon(Icons.Outlined.Face, contentDescription = "人格预设")
+                    }
                     IconButton(onClick = onMiscAi) {
                         Icon(Icons.Filled.Settings, contentDescription = "杂项 AI")
                     }

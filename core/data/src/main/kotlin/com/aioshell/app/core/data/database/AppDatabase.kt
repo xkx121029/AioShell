@@ -12,8 +12,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MessageEntity::class,
         MessageAttachmentEntity::class,
         PromptTemplateEntity::class,
+        KnowledgeDocumentEntity::class,
+        KnowledgeChunkEntity::class,
     ],
-    version = 7,
+    version = 9,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -21,6 +23,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun messageAttachmentDao(): MessageAttachmentDao
     abstract fun promptTemplateDao(): PromptTemplateDao
+    abstract fun knowledgeDao(): KnowledgeDao
 
     companion object {
         /** V1 → V2：message 表新增思考字段。 */
@@ -88,6 +91,45 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE session ADD COLUMN tags TEXT")
                 db.execSQL("ALTER TABLE session ADD COLUMN modelOverride TEXT")
                 db.execSQL("ALTER TABLE message ADD COLUMN starred INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** V7 → V8：message 表新增回复引用字段。 */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE message ADD COLUMN replyToRole TEXT")
+                db.execSQL("ALTER TABLE message ADD COLUMN replyToContent TEXT")
+            }
+        }
+
+        /** V8 → V9：分支字段 + 本地知识库（RAG）表。 */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE message ADD COLUMN parentMessageId TEXT")
+                db.execSQL("ALTER TABLE session ADD COLUMN leafId TEXT")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS knowledge_document (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        title TEXT NOT NULL,
+                        sourceName TEXT NOT NULL,
+                        sizeChars INTEGER NOT NULL,
+                        chunkCount INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS knowledge_chunk (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        docId TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        orderIndex INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_knowledge_chunk_docId ON knowledge_chunk (docId)")
             }
         }
     }
